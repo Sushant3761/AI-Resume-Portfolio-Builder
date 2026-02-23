@@ -1,12 +1,11 @@
 import os
 import requests
-from dotenv import load_dotenv
+import streamlit as st
 
-# Load environment variables from .env file
-load_dotenv()
-
-
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_KEY = (
+    os.getenv("OPENROUTER_API_KEY") 
+    or st.secrets.get("OPENROUTER_API_KEY")
+)
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "mistralai/mistral-7b-instruct"
 
@@ -16,7 +15,7 @@ def call_llm(prompt: str) -> str:
     Handles API failures, missing tokens, and extracts the generated text clearly.
     """
     if not OPENROUTER_API_KEY:
-        return "Error: OpenRouter API key is missing. Please add it to your .env file."
+        return "API key not configured. Add it to .env (local) or Streamlit Secrets (cloud)."
         
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
