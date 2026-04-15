@@ -1,5 +1,6 @@
 streamlit
-pandas
 requests
 scikit-learn
-reportlab
+markdown
+xhtml2pdf
+jinja2

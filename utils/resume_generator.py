@@ -1,257 +1,207 @@
 import os
+import logging
 import requests
 import streamlit as st
+import json
+from .prompts import RESUME_PROMPT, COVER_LETTER_PROMPT, PORTFOLIO_PROMPT, ANTI_HALLUCINATION
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-if not OPENROUTER_API_KEY:
-    try:
-        OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY")
-    except Exception:
-        OPENROUTER_API_KEY = None
+# Setup basic logging
+logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "mistralai/mistral-7b-instruct"
+PRIMARY_MODEL = "mistralai/mistral-7b-instruct"
+FALLBACK_MODEL = "openai/gpt-3.5-turbo"
 
-def call_llm(prompt: str) -> str:
+def get_api_key() -> str:
+    """Safely retrieves the API key, favoring Streamlit Secrets over runtime OS Env variables."""
+    # Priority 1: Streamlit Secrets
+    try:
+        if "OPENROUTER_API_KEY" in st.secrets:
+            return st.secrets["OPENROUTER_API_KEY"]
+    except Exception as e:
+        logging.debug("Could not read from st.secrets: %s", str(e))
+        
+    # Priority 2: OS Environment
+    return os.environ.get("OPENROUTER_API_KEY", "")
+
+def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
     """
     Helper function to make robust calls to the OpenRouter API.
-    Handles API failures, missing tokens, and extracts the generated text clearly.
+    Handles API failures, logs errors, and implements a fallback message.
     """
-    if not OPENROUTER_API_KEY:
-        return "API key not configured. Add it to .env (local) or Streamlit Secrets (cloud)."
+    api_key = get_api_key()
+    
+    if not api_key:
+        logging.error("API Key check failed: OPENROUTER_API_KEY is None or empty.")
+        return "⚠️ API key not configured. Add it to .env (local) or Streamlit Secrets (cloud)."
         
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "HTTP-Referer": "https://example.com/myapp", # Recommended required headers for OpenRouter
+        "X-Title": "AI Career Builder"
     }
     
+    current_model = FALLBACK_MODEL if use_fallback_model else PRIMARY_MODEL
+    
     payload = {
-        "model": MODEL,
+        "model": current_model,
         "messages": [
             {
                 "role": "system",
-                "content": "You are a professional resume and career advisor."
+                "content": "You are a highly analytical technical advisor following explicit constraints."
             },
             {
                 "role": "user",
                 "content": prompt
             }
         ],
-        "temperature": 0.7,
-        "max_tokens": 450
+        "temperature": 0.5,
+        "max_tokens": 800
     }
     
-    try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
-        
-        # Handle rate limits or other HTTP errors early
-        if response.status_code == 429:
-            return "Error: Rate limit exceeded for OpenRouter API. Please try again later."
+    max_retries = 3
+    attempt = 0
+    last_error_msg = ""
+    
+    while attempt < max_retries:
+        attempt += 1
+        try:
+            logging.debug(f"Attempting API call {attempt}/{max_retries} with model {current_model}")
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
             
-        response.raise_for_status()
-        data = response.json()
-        
-        if "choices" in data and len(data["choices"]) > 0:
-            content = data["choices"][0].get("message", {}).get("content", "")
-            if not content:
-                return "Error: Empty response received from the API."
-            return content.strip()
-        elif "error" in data:
-            error_message = data["error"].get("message", "Unknown Error") if isinstance(data["error"], dict) else str(data["error"])
-            return f"API Error: {error_message}"
-        else:
-            return "Error: Unexpected response format from OpenRouter API."
+            # Debug visibility explicitly logging status code and partial body length or text (safely)
+            logging.error(f"DEBUG - API Status: {response.status_code}")
+            logging.error(f"DEBUG - API Response snippet: {response.text[:200]}...")
             
-    except requests.exceptions.Timeout:
-        return "Error: Request to OpenRouter API timed out."
-    except requests.exceptions.RequestException as e:
-        return f"Error connecting to OpenRouter API: {str(e)}"
+            if response.status_code == 429:
+                logging.error("API failed: Rate limit exceeded (429) on attempt %d", attempt)
+                last_error_msg = "⚠️ AI service rate limited. Please wait a few seconds and try again."
+                continue
+                
+            response.raise_for_status()
+            data = response.json()
+            
+            # ... processing
+            if "choices" in data and len(data["choices"]) > 0:
+                content = data["choices"][0].get("message", {}).get("content", "")
+                if not content:
+                    logging.error("API failed: Empty response format: %s", response.text)
+                    last_error_msg = "⚠️ AI service returned an empty response. Please try again later."
+                    continue
+                return content.strip()
+            elif "error" in data:
+                error_message = data["error"].get("message", "Unknown Error") if isinstance(data["error"], dict) else str(data["error"])
+                logging.error("API failed with embedded error on attempt %d: %s", attempt, error_message)
+                last_error_msg = "⚠️ AI service temporarily unavailable. Please try again later."
+                
+                # If the error is model-related or massive failure, attempt to switch model
+                if attempt == 1 and not use_fallback_model:
+                     return call_llm(prompt, use_fallback_model=True)
+                     
+                continue
+            else:
+                logging.error("API failed: Unexpected JSON format %s", response.text)
+                last_error_msg = "⚠️ AI service temporarily unavailable. Please try again later."
+                continue
+                
+        except requests.exceptions.Timeout as e:
+            logging.error("API failed: Timeout error on attempt %d - %s", attempt, str(e))
+            last_error_msg = "⚠️ AI service connection timed out. Please try again later."
+        except requests.exceptions.RequestException as e:
+            logging.error("API failed: Request exception on attempt %d - %s", attempt, str(e))
+            last_error_msg = "⚠️ AI service temporarily unavailable."
+        except Exception as e:
+            logging.error("API failed: Unknown exception on attempt %d - %s", attempt, str(e))
+            last_error_msg = "⚠️ AI service encountered an unexpected error."
+            
+    return last_error_msg
 
+
+def _get_safe_field(data: dict, key: str) -> str:
+    """Helper to ensure empty fields are explicitly treated to prevent hallucination."""
+    val = data.get(key, '').strip()
+    return val if val else "Not specified"
 
 def generate_resume(data: dict) -> str:
-    """
-    Generates an ATS-optimized professional resume based on user details.
-    Uses strong prompt engineering to enforce the structure and tone.
-    """
+    """Generates an ATS-optimized professional resume dynamically against user inputs."""
     name = data.get('name', '').strip()
-    education = data.get('education', '').strip()
-    skills = data.get('skills', '').strip()
-    projects = data.get('projects', '').strip()
-    achievements = data.get('achievements', '').strip()
-    experience = data.get('experience', '').strip()
-    target_role = data.get('target_role', '').strip()
+    target_role = _get_safe_field(data, 'target_role')
     
-    # Basic validation
-    if not name or not target_role:
-        return "Error: Name and Target Role are required for resume generation."
+    if not name or target_role == "Not specified":
+        return "Error: Name and Target Role are required for operations."
+        
+    prompt = RESUME_PROMPT.format(
+        anti_hallucination=ANTI_HALLUCINATION,
+        target_role=target_role,
+        name=name,
+        education=_get_safe_field(data, 'education'),
+        skills=_get_safe_field(data, 'skills'),
+        projects=_get_safe_field(data, 'projects'),
+        achievements=_get_safe_field(data, 'achievements'),
+        experience=_get_safe_field(data, 'experience')
+    )
     
-    # Fill defaults for optional empty fields
-    education = education if education else "N/A"
-    skills = skills if skills else "N/A"
-    projects = projects if projects else "N/A"
-    achievements = achievements if achievements else "N/A"
-    experience = experience if experience else "N/A"
-
-    prompt = f"""You are a senior technical recruiter and ATS resume optimizer.
-
-Generate a STRICT one-page resume (MAX 450 words).
-
-MANDATORY RULES:
-- Add explicit headers in ALL CAPS: PROFESSIONAL SUMMARY, TECHNICAL SKILLS, PROJECTS, EXPERIENCE, EDUCATION, ACHIEVEMENTS.
-- Maximum 450 words.
-- Maximum 3-line professional summary.
-- Maximum 2 bullet points per project.
-- Maximum 3 achievements.
-- No long paragraphs.
-- No repetition.
-- No generic phrases like "dynamic", "highly motivated", "passionate".
-- Focus only on relevant technical strengths.
-- Do not remove measurable metrics (use measurable impact if possible).
-- Keep concise bullet format.
-- Ensure all sections are fully completed before stopping.
-- Ensure EXPERIENCE section is never truncated. If nearing token limit, prioritize completing EXPERIENCE and EDUCATION.
-
-STRUCTURE:
-
-NAME
-Contact Information (single line)
-
-PROFESSIONAL SUMMARY (3 lines max)
-
-TECHNICAL SKILLS
-Grouped and concise.
-
-PROJECTS
-Project Name
-• Bullet
-• Bullet
-
-EXPERIENCE (if provided)
-Role – Company
-• Bullet
-• Bullet
-
-EDUCATION
-
-ACHIEVEMENTS (max 3 bullets)
-
-Target Role: Software Engineer
-
-Align content with:
-- Software validation
-- Bug fixing
-- Code maintenance
-- Testing techniques
-- Feature enhancement
-- Documentation
-- Collaboration
-
-Student Details:
-Name: {name}
-Education: {education}
-Skills: {skills}
-Projects: {projects}
-Achievements: {achievements}
-Experience: {experience}
-
-Return only formatted resume text.
-No extra commentary.
-- If output exceeds 450 words, rewrite it shorter automatically."""
-
     return call_llm(prompt)
 
 
 def generate_cover_letter(data: dict) -> str:
-    """
-    Generates a concise and impactful cover letter tailored to a specific target role.
-    """
+    """Generates a concise Cover Letter strictly mapped to actual skills."""
     name = data.get('name', '').strip()
-    target_role = data.get('target_role', '').strip()
-    skills = data.get('skills', '').strip()
-    projects = data.get('projects', '').strip()
+    target_role = _get_safe_field(data, 'target_role')
     
-    if not target_role:
-        return "Error: Target Role is required for cover letter generation."
-
-    skills = skills if skills else "N/A"
-    projects = projects if projects else "N/A"
-
-    prompt = f"""Write a concise and impactful cover letter for a Software Engineer role.
-
-MANDATORY RULES:
-- 200–230 words maximum.
-- Maximum 4 short paragraphs.
-- Avoid long sentences.
-- No placeholders like [Company Name].
-- No bracketed text.
-- No generic phrases ("I am passionate", "dynamic individual").
-- Tone: Concise, Confident, Professional, Direct, Engineering-focused, Results-oriented.
-
-STRUCTURE:
-
-Opening paragraph (Sharper, more direct):
-- State clear intent for the Software Engineer role immediately.
-- Directly connect core skills to technical needs without fluff.
-
-Middle paragraph:
-- Highlight 1–2 strong projects or technical contributions.
-- Show measurable impact metrics and practical results.
-
-Third paragraph:
-- Highlight experience in debugging, testing, code maintenance, and feature enhancement.
-- Subtly reference stakeholder collaboration, code reviews, and peer-reviewing modifications.
-
-Closing paragraph:
-- Express interest clearly.
-- Keep short and confident.
-
-Applicant Details:
-Name: {name}
-Key Skills: {skills}
-Key Projects: {projects}
-
-Return only clean formatted letter text.
-No subject line.
-No placeholders.
-No markdown formatting.
-If output exceeds 230 words, rewrite it shorter automatically."""
+    if not name or target_role == "Not specified":
+        return "Error: Name and Target Role are required for operations."
+        
+    prompt = COVER_LETTER_PROMPT.format(
+        anti_hallucination=ANTI_HALLUCINATION,
+        name=name,
+        target_role=target_role,
+        skills=_get_safe_field(data, 'skills'),
+        projects=_get_safe_field(data, 'projects'),
+        experience=_get_safe_field(data, 'experience')
+    )
     
     return call_llm(prompt)
 
 
-def generate_portfolio_summary(data: dict) -> str:
+def generate_portfolio_data(data: dict) -> dict:
     """
-    Generates a short, professional portfolio summary for personal websites or LinkedIn.
+    Generates JSON payload for the Portfolio generator.
+    Raises ValueError if strict JSON isn't returned.
     """
     name = data.get('name', '').strip()
-    skills = data.get('skills', '').strip()
-    experience = data.get('experience', '').strip()
-
-    skills = skills if skills else "N/A"
-    experience = experience if experience else "N/A"
-
-    prompt = f"""You are a technical portfolio strategist.
-
-MANDATORY RULES:
-- Limit output to 150–180 words maximum.
-- Remove generic phrases like: "dynamic", "passionate", "build the future", "cutting-edge".
-- Tone: Crisp, Professional, Impact-focused, Engineering-oriented.
-- Suitable for: LinkedIn, Personal website, GitHub bio.
-- Return plain text only. No markdown formatting.
-- If output exceeds 180 words, rewrite it shorter automatically.
-
-HIGHLIGHT:
-- AI Resume Builder project
-- API integration
-- ML pipeline development
-- Spring Boot backend
-- AWS/cloud exposure
-- Internship under IBM AICTE Edunet
-
-Candidate Details:
-Name: {name}
-Core Skills: {skills}
-Experience Background: {experience}
-
-Return only the portfolio summary text."""
-
-    return call_llm(prompt)
+    
+    prompt = PORTFOLIO_PROMPT.format(
+        anti_hallucination=ANTI_HALLUCINATION,
+        name=name,
+        target_role=_get_safe_field(data, 'target_role'),
+        skills=_get_safe_field(data, 'skills'),
+        experience=_get_safe_field(data, 'experience'),
+        projects=_get_safe_field(data, 'projects')
+    )
+    
+    raw_response = call_llm(prompt)
+    
+    # Check if raw_response is a fallback error message
+    if raw_response.startswith("⚠️"):
+        # We simulate a fallback empty JSON if API fails, so the app doesn't crash but shows "Not specified"
+        return {"about": raw_response, "projects": []}
+    
+    # Robust JSON extraction using python parsing mechanics to strip extraneous text
+    import re
+    match = re.search(r'\{(?:[^{}]|(?R))*\}|\{.*\}', raw_response, re.DOTALL)
+    if match:
+        json_str = match.group(0)
+    else:
+        json_str = raw_response # fallback
+        
+    try:
+        json_data = json.loads(json_str.strip())
+        return json_data
+    except Exception as e:
+        logging.error("Failed to parse LLM Output into JSON: %s\nRAW OUTPUT: %s", str(e), raw_response)
+        return {
+            "about": "⚠️ Unable to generate portfolio data layout. AI returned unstructured text.",
+            "projects": []
+        }

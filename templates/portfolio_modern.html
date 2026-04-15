@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ name | e }} - Developer Portfolio</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Plus+Jakarta+Sans:wght@400;600;800&display=swap');
+        
+        :root {
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --neon-accent: #38bdf8;
+            --neon-glow: rgba(56, 189, 248, 0.5);
+        }
+        
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            margin: 0;
+            padding: 0;
+            line-height: 1.7;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 5rem;
+        }
+        
+        h1 {
+            font-size: 4rem;
+            font-weight: 800;
+            margin: 0;
+            background: linear-gradient(to right, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 30px var(--neon-glow);
+        }
+        
+        .role {
+            font-family: 'Fira Code', monospace;
+            color: var(--neon-accent);
+            font-size: 1.2rem;
+            margin-top: 1rem;
+        }
+        
+        section {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 2.5rem;
+            margin-bottom: 3rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        h2 {
+            display: inline-block;
+            font-size: 1.8rem;
+            margin-top: 0;
+            border-bottom: 2px solid var(--neon-accent);
+            padding-bottom: 0.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+        
+        .skills-grid {
+            font-family: 'Fira Code', monospace;
+            color: var(--neon-accent);
+            background: rgba(0, 0, 0, 0.2);
+            padding: 1rem;
+            border-radius: 8px;
+            border-left: 4px solid var(--neon-accent);
+        }
+        
+        .projects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+        
+        .project-card {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 2rem;
+            border-radius: 12px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.02);
+        }
+        
+        .project-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 0 15px var(--neon-glow);
+            border-color: rgba(56, 189, 248, 0.3);
+        }
+        
+        .project-card h3 {
+            margin-top: 0;
+            color: var(--text-main);
+            font-family: 'Fira Code', monospace;
+        }
+        
+        footer {
+            text-align: center;
+            color: var(--text-muted);
+            font-family: 'Fira Code', monospace;
+            margin-top: 4rem;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>{{ name | e }}</h1>
+            <div class="role">&gt; {{ target_role | e }} _</div>
+        </header>
+
+        <section id="about">
+            <h2>About Me</h2>
+            <p>{{ about | e }}</p>
+        </section>
+
+        <section id="skills">
+            <h2>Tech Stack</h2>
+            <div class="skills-grid">
+                {{ skills | e }}
+            </div>
+        </section>
+
+        <section id="projects">
+            <h2>Featured Projects</h2>
+            <div class="projects-grid">
+                {% for project in projects %}
+                <div class="project-card">
+                    <h3>{{ project.title | e }}</h3>
+                    <p>{{ project.description | e }}</p>
+                </div>
+                {% else %}
+                <p>No projects specified.</p>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section id="contact">
+            <h2>Connection Status</h2>
+            <p>{{ contact | e }}</p>
+            <p>Ping me at: <a href="#" style="color: var(--neon-accent); text-decoration: none;">contact@system.local</a></p>
+        </section>
+
+        <footer>
+            // {{ name | e }} &copy; 2026 // GENERATED_BY_AI
+        </footer>
+    </div>
+</body>
+</html>
