@@ -3,6 +3,14 @@ import logging
 from .resume_generator import call_llm
 from .prompts import ATS_SCORER_PROMPT
 
+def extract_json(text: str) -> str:
+    """Safely extracts the first valid JSON object starting with '{' and ending with '}'."""
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        return text[start:end+1]
+    return text
+
 def analyze_ats_match(user_text: str, job_description: str) -> dict:
     """
     Ranks the user's semantic fit and gaps against the JD using an OpenRouter LLM call.
@@ -30,20 +38,25 @@ def analyze_ats_match(user_text: str, job_description: str) -> dict:
         }
     
     # Robust JSON extraction
-    import re
-    match = re.search(r'\{(?:[^{}]|(?R))*\}|\{.*\}', raw_response, re.DOTALL)
-    if match:
-        json_str = match.group(0)
-    else:
-        json_str = raw_response
+    json_str = extract_json(raw_response)
         
     try:
         data = json.loads(json_str.strip())
+        # Validate that the returned data has the required fields
+        if not isinstance(data, dict):
+            raise ValueError("Expected dictionary")
+        # Ensure default keys exist
+        data.setdefault("match_score", 0)
+        data.setdefault("missing_skills", [])
+        data.setdefault("suggestions", [])
         return data
     except Exception as e:
         logging.error("Failed to parse ATS LLM output into JSON: %s\nRAW OUTPUT: %s", str(e), raw_response)
         return {
             "match_score": 0,
             "missing_skills": ["Error parsing AI response"],
-            "suggestions": ["The AI returned unstructured text. Please try calculating again."]
+            "suggestions": [
+                "The AI returned unstructured text. Please try calculating again.",
+                f"Raw snippet: {raw_response[:200]}"
+            ]
         }

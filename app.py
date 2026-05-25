@@ -16,6 +16,7 @@ from utils.similarity import (
     analyze_ats_match
 )
 import re
+
 def _clean_filename(filename: str) -> str:
     """Removes special characters from filenames to prevent OS path issues."""
     filename = os.path.basename(filename)
@@ -24,66 +25,193 @@ def _clean_filename(filename: str) -> str:
 def main():
     st.set_page_config(page_title="AI Career Developer Platform", page_icon="💻", layout="wide")
 
-    # Injecting Custom CSS to make it look nicer
+    # Injecting custom high-end Glassmorphic CSS styling
     st.markdown("""
         <style>
-        .stButton>button { width: 100%; border-radius: 6px; }
-        .main-header { font-size: 2.5rem; font-weight: 800; margin-bottom: 0px; color: #1e88e5;}
-        .sub-header { color: #555; margin-bottom: 30px; font-size: 1.1rem; }
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;700;800&display=swap');
+        
+        /* Global layout and typography overrides */
+        html, body, [class*="css"] {
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        
+        /* Custom Padding and Spacing */
+        .main .block-container {
+            padding-top: 1.5rem;
+            padding-bottom: 2rem;
+            max-width: 1200px;
+        }
+        
+        /* Gradient Titles */
+        .main-header {
+            font-size: 2.8rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.1rem;
+            letter-spacing: -1.5px;
+        }
+        
+        .sub-header {
+            color: #64748b;
+            margin-bottom: 1.8rem;
+            font-size: 1.1rem;
+            font-weight: 400;
+        }
+        
+        /* Slate Styled Section Panels */
+        .section-panel {
+            background-color: rgba(30, 41, 59, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 14px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        /* Interactive Neon Gradient Buttons */
+        .stButton>button {
+            border-radius: 8px !important;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+            color: white !important;
+            font-weight: 600 !important;
+            border: none !important;
+            padding: 0.6rem 1.2rem !important;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2) !important;
+            width: 100%;
+        }
+        
+        .stButton>button:hover {
+            transform: translateY(-2px) !important;
+            box-shadow: 0 6px 18px rgba(99, 102, 241, 0.4) !important;
+            background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
+            color: #f8fafc !important;
+        }
+        
+        .stButton>button:active {
+            transform: translateY(0px) !important;
+        }
+        
+        /* Custom styled sidebar adjustments */
+        [data-testid="stSidebar"] {
+            background-color: #0b0f19 !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
+        }
+        
+        /* Modernized Tabs Selection */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 10px;
+            background-color: rgba(15, 23, 42, 0.3);
+            padding: 8px;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            margin-bottom: 1.5rem;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            height: 42px;
+            white-space: pre;
+            background-color: transparent;
+            border-radius: 9px;
+            color: #64748b;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            padding: 0 20px;
+        }
+        
+        .stTabs [aria-selected="true"] {
+            background-color: rgba(99, 102, 241, 0.15) !important;
+            color: #a5b4fc !important;
+            font-weight: 600 !important;
+            box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.25) !important;
+        }
         </style>
     """, unsafe_allow_html=True)
+
+    # Initialize all user profile fields in st.session_state for robust data persistence
+    profile_fields = {
+        "name": "",
+        "target_role": "",
+        "email": "",
+        "github": "",
+        "linkedin": "",
+        "education": "",
+        "skills": "",
+        "experience": "",
+        "projects": "",
+        "achievements": "",
+        "job_description": ""
+    }
+    
+    for key, default in profile_fields.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
 
     # Sidebar
     st.sidebar.title("AI Career Platform")
     st.sidebar.info("Build professional, ATS-optimized materials and live portfolios locally.")
-    st.sidebar.caption("Powered by OpenRouter API & Scikit-Learn.")
+    st.sidebar.caption("Powered by OpenRouter API.")
     
     if st.sidebar.button("Reset / Clear All", use_container_width=True):
-        st.session_state.clear()
+        # Cleanly wipe all session state keys
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.toast("Profile and caches reset successfully!", icon="🧹")
         st.rerun()
     
     st.markdown('<div class="main-header">AI Resume & Portfolio Builder</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Provide your details to dynamically generate custom career artifacts.</div>', unsafe_allow_html=True)
 
-    with st.form("user_input_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Personal Information")
-            name = st.text_input("Name *", placeholder="John Doe")
-            target_role = st.text_input("Target Job Role *", placeholder="Machine Learning Engineer")
-            
-        with col2:
-            st.subheader("Target Job Specification")
-            job_description = st.text_area("Job Description (For ATS Scorer)", help="Paste the JD to match your profile against it.", placeholder="Paste JD here...", height=130)
-
-        st.subheader("Technical Profiling")
-        edu_col, skill_col = st.columns(2)
-        with edu_col:
-            education = st.text_area("Education", placeholder="B.Sc. in Computer Science, 2020-2024")
-            achievements = st.text_area("Achievements", placeholder="1st Place Hackathon, Dean's List")
-        with skill_col:
-            skills = st.text_area("Core Skills *", placeholder="Python, C++, Machine Learning, React")
-            experience = st.text_area("Experience", placeholder="Software Engineering Intern at XYZ")
-            
-        projects = st.text_area("Projects", placeholder="1. E-commerce API (Node.js) - Scaled to 10k reqs\n2. AI Builder (Python)")
+    # Profiling Section (Bypassing st.form completely to achieve auto-saving/persistence)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown('<div style="font-size: 1.25rem; font-weight: 700; color: #f8fafc; margin-bottom: 0.5rem;">👤 Personal Information</div>', unsafe_allow_html=True)
+        st.text_input("Name *", key="name", placeholder="John Doe")
+        st.text_input("Target Job Role *", key="target_role", placeholder="Machine Learning Engineer")
         
-        submit_button = st.form_submit_button("Save Profile Defaults", type="primary")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.text_input("Email", key="email", placeholder="john@example.com")
+        with c2:
+            st.text_input("GitHub URL", key="github", placeholder="https://github.com/john")
+        with c3:
+            st.text_input("LinkedIn URL", key="linkedin", placeholder="https://linkedin.com/in/john")
+        
+    with col2:
+        st.markdown('<div style="font-size: 1.25rem; font-weight: 700; color: #f8fafc; margin-bottom: 0.5rem;">🎯 Target Job Specification</div>', unsafe_allow_html=True)
+        st.text_area("Job Description (For ATS Scorer)", key="job_description", help="Paste the JD to match your profile against it.", placeholder="Paste JD here...", height=140)
 
-    if not name.strip() or not target_role.strip():
-        st.warning("⚠️ Please provide 'Name' and 'Target Job Role' to unlock generators.")
-        return
+    st.markdown('<div style="font-size: 1.25rem; font-weight: 700; color: #f8fafc; margin-top: 1rem; margin-bottom: 0.5rem;">💻 Technical Profiling</div>', unsafe_allow_html=True)
+    edu_col, skill_col = st.columns(2)
+    
+    with edu_col:
+        st.text_area("Education", key="education", placeholder="B.Sc. in Computer Science, 2020-2024")
+        st.text_area("Achievements", key="achievements", placeholder="1st Place Hackathon, Dean's List")
+    with skill_col:
+        st.text_area("Core Skills *", key="skills", placeholder="Python, C++, Machine Learning, React")
+        st.text_area("Experience", key="experience", placeholder="Software Engineering Intern at XYZ")
+        
+    st.text_area("Projects", key="projects", placeholder="1. E-commerce API (Node.js) - Scaled to 10k reqs\n2. AI Builder (Python)")
+    
+    # Check profile completion status
+    is_profile_ready = bool(st.session_state.name.strip()) and bool(st.session_state.target_role.strip())
 
     st.divider()
 
-    # Data collection dictionary
+    # Dynamic data mapping
     user_data = {
-        "name": name,
-        "education": education,
-        "skills": skills,
-        "projects": projects,
-        "achievements": achievements,
-        "experience": experience,
-        "target_role": target_role
+        "name": st.session_state.name,
+        "target_role": st.session_state.target_role,
+        "email": st.session_state.email,
+        "github": st.session_state.github,
+        "linkedin": st.session_state.linkedin,
+        "education": st.session_state.education,
+        "skills": st.session_state.skills,
+        "projects": st.session_state.projects,
+        "achievements": st.session_state.achievements,
+        "experience": st.session_state.experience
     }
 
     # Tab interface for cleaner UX
@@ -91,88 +219,90 @@ def main():
 
     with tab1:
         st.subheader("Generate Resume")
-        if st.button("Generate / Regenerate Professional Resume"):
-            st.toast("Generating Resume...", icon='⏳')
-            with st.spinner("AI is analyzing and formatting your resume..."):
-                resume_output = generate_resume(user_data)
-                
-                if resume_output.startswith("⚠️") or resume_output.startswith("Error"):
-                    st.error(resume_output)
-                else:
-                    st.success("Resume Generated Successfully!")
-                    st.markdown("### Preview")
-                    st.markdown(resume_output) # Rendered markdown
-                    st.info("💡 To save as an ATS-friendly PDF: Press **Ctrl+P** (Windows) or **Cmd+P** (Mac) and select 'Save as PDF'.")
+        if not is_profile_ready:
+            st.warning("⚠️ Please provide 'Name' and 'Target Job Role' in the inputs above to unlock this generator.")
+        else:
+            if st.button("Generate / Preview Professional Resume"):
+                st.toast("Generating Resume...", icon='⏳')
+                with st.spinner("AI is analyzing and formatting your resume..."):
+                    resume_output = generate_resume(user_data)
+                    
+                    if resume_output.startswith("⚠️") or resume_output.startswith("Error"):
+                        st.error(resume_output)
+                    else:
+                        st.success("Resume ready!")
+                        st.markdown("### Preview")
+                        st.markdown(resume_output)
+                        st.info("💡 To save as an ATS-friendly PDF: Press **Ctrl+P** (Windows) or **Cmd+P** (Mac) and select 'Save as PDF'.")
 
     with tab2:
         st.subheader("Generate Cover Letter")
-        if st.button("Generate / Regenerate Tailored Cover Letter"):
-            st.toast("Generating Cover Letter...", icon='⏳')
-            with st.spinner("Writing the perfect introduction..."):
-                cl_output = generate_cover_letter(user_data)
-                
-                if cl_output.startswith("⚠️") or cl_output.startswith("Error"):
-                    st.error(cl_output)
-                else:
-                    st.success("Cover Letter Generated Successfully!")
-                    st.markdown("### Preview")
-                    st.markdown(cl_output)
-                    st.info("💡 To save as a PDF: Press **Ctrl+P** (Windows) or **Cmd+P** (Mac) and select 'Save as PDF'.")
+        if not is_profile_ready:
+            st.warning("⚠️ Please provide 'Name' and 'Target Job Role' in the inputs above to unlock this generator.")
+        else:
+            if st.button("Generate / Preview Tailored Cover Letter"):
+                st.toast("Generating Cover Letter...", icon='⏳')
+                with st.spinner("Writing the perfect introduction..."):
+                    cl_output = generate_cover_letter(user_data)
+                    
+                    if cl_output.startswith("⚠️") or cl_output.startswith("Error"):
+                        st.error(cl_output)
+                    else:
+                        st.success("Cover letter ready!")
+                        st.markdown("### Preview")
+                        st.markdown(cl_output)
+                        st.info("💡 To save as a PDF: Press **Ctrl+P** (Windows) or **Cmd+P** (Mac) and select 'Save as PDF'.")
 
     with tab3:
         st.subheader("Generate Live Portfolio Website")
-        st.markdown("Instantly build an attractive, code-ready single HTML file.")
-        
-        theme = st.selectbox("Select Theme", ["portfolio_modern", "portfolio_minimal"], index=0, format_func=lambda x: "Neon Modern (Dark)" if "modern" in x else "Clean Minimal (Light)")
-        
-        if st.button("Generate / Regenerate Live Portfolio"):
-            if not skills:
-                st.warning("We highly recommend providing some skills before generating a portfolio!")
-                
-            st.toast("Generating Portfolio Data...", icon='⏳')
-            with st.spinner("Instructing LLM to output Semantic JSON structure..."):
-                # Fetch structured data
-                portfolio_json = generate_portfolio_data(user_data)
-                
-                if isinstance(portfolio_json.get("about"), str) and portfolio_json.get("about", "").startswith("⚠️"):
-                    st.error(portfolio_json["about"])
-                else:
-                    # Compile HTML template
-                    final_html = build_portfolio_html(portfolio_json, theme, user_data)
+        if not is_profile_ready:
+            st.warning("⚠️ Please provide 'Name' and 'Target Job Role' in the inputs above to unlock this generator.")
+        else:
+            st.markdown("Instantly build an attractive, code-ready single HTML file.")
+            theme = st.selectbox("Select Theme", ["portfolio_modern", "portfolio_minimal"], index=0, format_func=lambda x: "Neon Modern (Dark)" if "modern" in x else "Clean Minimal (Light)")
+            
+            if st.button("Generate / Preview Live Portfolio"):
+                if not st.session_state.skills.strip():
+                    st.warning("We highly recommend providing some skills before generating a portfolio!")
                     
-                    st.success("Portfolio HTML generated securely!")
+                st.toast("Generating Portfolio Data...", icon='⏳')
+                with st.spinner("Instructing LLM to output Semantic JSON structure..."):
+                    portfolio_json = generate_portfolio_data(user_data)
                     
-                    # File download setup
-                    safe_name = _clean_filename(name)
-                    
-                    c1, c2 = st.columns([1, 3])
-                    with c1:
-                        st.download_button(
-                            label="⬇️ Download index.html",
-                            data=final_html,
-                            file_name=f"portfolio_{safe_name}.html",
-                            mime="text/html",
-                            type="primary",
-                            use_container_width=True
-                        )
-                    
-                    st.markdown("### Live Preview")
-                    components.html(final_html, height=600, scrolling=True)
+                    if isinstance(portfolio_json.get("about"), str) and portfolio_json.get("about", "").startswith("⚠️"):
+                        st.error(portfolio_json["about"])
+                    else:
+                        final_html = build_portfolio_html(portfolio_json, theme, user_data)
+                        st.success("Portfolio HTML compiled successfully!")
+                        safe_name = _clean_filename(st.session_state.name)
+                        
+                        c1, c2 = st.columns([1, 3])
+                        with c1:
+                            st.download_button(
+                                label="⬇️ Download index.html",
+                                data=final_html,
+                                file_name=f"portfolio_{safe_name}.html",
+                                mime="text/html",
+                                type="primary",
+                                use_container_width=True
+                            )
+                        
+                        st.markdown("### Live Preview")
+                        components.html(final_html, height=600, scrolling=True)
 
     with tab4:
         st.subheader("ATS Keyword Scoring Engine")
-        
-        if st.button("Calculate / Recalculate ATS Match Score"):
-            if not job_description:
-                st.warning("Please provide a Job Description in the top right box to compare against.")
-            elif not skills and not projects and not experience:
-                st.warning("Please provide at least your Skills or Projects to calculate a match score.")
-            else:
+        if not st.session_state.job_description.strip():
+            st.warning("Please provide a Job Description in the top right box to analyze against.")
+        elif not st.session_state.skills.strip() and not st.session_state.projects.strip() and not st.session_state.experience.strip():
+            st.warning("Please provide at least your Skills, Experience, or Projects to evaluate.")
+        else:
+            if st.button("Calculate / Recalculate ATS Match Score"):
                 st.toast("Analyzing Semantic Fit with AI...", icon='⏳')
                 with st.spinner("LLM is evaluating your profile against the JD..."):
-                    combined_user_text = f"{skills} {projects} {experience} {education} {achievements}"
+                    combined_user_text = f"{st.session_state.skills} {st.session_state.projects} {st.session_state.experience} {st.session_state.education} {st.session_state.achievements}"
                     
-                    ats_result = analyze_ats_match(combined_user_text, job_description)
+                    ats_result = analyze_ats_match(combined_user_text, st.session_state.job_description)
                     match_score = ats_result.get("match_score", 0)
                     missing_keywords = ats_result.get("missing_skills", [])
                     suggestions = ats_result.get("suggestions", [])

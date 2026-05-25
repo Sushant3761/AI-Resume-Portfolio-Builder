@@ -1,6 +1,6 @@
 """
 Prompts configuration file.
-Defines dynamic and robust prompts for OpenRouter API interactions, enforcing structued outputs and 
+Defines dynamic and robust prompts for OpenRouter API interactions, enforcing structured outputs and 
 guarding against hallucinated values.
 """
 
@@ -70,19 +70,19 @@ MANDATORY RULES:
 {anti_hallucination}
 
 Return output in STRICT JSON format exactly as follows:
-{
+{{
   "about": "A concise 2-3 sentence engaging professional summary about the applicant's focus and trajectory.",
   "projects": [
-    {
+    {{
       "title": "Name of the project",
       "description": "Explicitly state: Problem solved -> Technical Solution implemented -> Measurable Impact. Avoid generic fluff. (2-3 sentences max)"
-    }
+    }}
   ]
-}
+}}
 
 - Extract up to 4 the best projects explicitly mentioned in the user's input.
 - If projects are empty or weak, return an empty list or simply explicitly state "Not specified" in description.
-- DO NOT return markdown fences like ```json at the beginning or end of your string. Return just the raw JSON structured object starting with { and ending with }.
+- DO NOT return markdown fences like ```json at the beginning or end of your string. Return just the raw JSON structured object starting with {{ and ending with }}.
 
 Candidate Details:
 Name: {name}
@@ -97,11 +97,11 @@ Your task is to compare a user's combined technical profile against a target Job
 
 MANDATORY RULES:
 - Return output in STRICT JSON format exactly as follows:
-{
+{{
   "match_score": 85,
   "missing_skills": ["Docker", "Kubernetes", "Redis"],
   "suggestions": ["Add Docker to your skills section", "Mention experience with containerization"]
-}
+}}
 - "match_score" must be an integer between 0 and 100 representing the semantic match percentage.
 - "missing_skills" must be a list of up to 10 critical hard technical skills found in the JD but completely missing from the user's profile.
 - "suggestions" should be a list of 2-3 brief actionable tips to improve the profile based on the missing skills.

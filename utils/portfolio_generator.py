@@ -11,7 +11,6 @@ def build_portfolio_html(json_data: dict, template_name: str, applicant_data: di
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     templates_dir = os.path.join(base_dir, "templates")
     
-    # If the directory doesn't exist, this will crash. We assume the templates exist per the plan.
     env = Environment(
         loader=FileSystemLoader(templates_dir),
         autoescape=select_autoescape(['html', 'xml'])
@@ -30,7 +29,9 @@ def build_portfolio_html(json_data: dict, template_name: str, applicant_data: di
         "name": applicant_data.get('name', 'Developer Persona'),
         "target_role": applicant_data.get('target_role', 'Software Engineer'),
         "skills": applicant_data.get('skills', 'No skills specified'),
-        "contact": "Contact info not specified", # can be extended
+        "email": applicant_data.get('email', '').strip(),
+        "github": applicant_data.get('github', '').strip(),
+        "linkedin": applicant_data.get('linkedin', '').strip(),
         "about": json_data.get("about", "Not specified"),
         "projects": json_data.get("projects", [])
     }

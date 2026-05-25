@@ -9,8 +9,12 @@ from .prompts import RESUME_PROMPT, COVER_LETTER_PROMPT, PORTFOLIO_PROMPT, ANTI_
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-PRIMARY_MODEL ="meta-llama/llama-3-8b-instruct:free"
+PRIMARY_MODEL = "meta-llama/llama-3-8b-instruct:free"
 FALLBACK_MODEL = "openai/gpt-3.5-turbo"
+
+class APIError(Exception):
+    """Custom exception raised on API failure to prevent Streamlit caching."""
+    pass
 
 def get_api_key():
     try:
@@ -18,15 +22,12 @@ def get_api_key():
     except Exception:
         return os.environ.get("OPENROUTER_API_KEY")
 
-def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
+def call_llm_raw(prompt: str, use_fallback_model: bool = False) -> str:
     """
-    Helper function to make robust calls to the OpenRouter API.
-    Handles API failures, logs errors, and implements a fallback message.
+    Performs the raw HTTP request to the OpenRouter API.
+    Handles retries, rate limits, and errors directly.
     """
     api_key = get_api_key()
-    
-    print(f"API Key Present: {bool(api_key)}")
-    
     if not api_key:
         logging.error("API Key check failed: OPENROUTER_API_KEY is None or empty.")
         return "⚠️ API key not configured. Add it to .env (local) or Streamlit Secrets (cloud)."
@@ -57,12 +58,8 @@ def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
     while attempt < max_retries:
         attempt += 1
         try:
-            print(f"Attempt: {attempt}")
             logging.debug(f"Attempting API call {attempt}/{max_retries} with model {current_model}")
             response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
-            
-            print("STATUS:", response.status_code)
-            print("RESPONSE:", response.text[:300])
             
             if response.status_code == 401:
                 last_error_msg = "⚠️ Invalid API Key. Please check your configuration."
@@ -77,7 +74,7 @@ def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
             elif response.status_code == 404:
                 logging.error("API failed: Model Not Found (404) on attempt %d", attempt)
                 if attempt == 1 and not use_fallback_model:
-                     return call_llm(prompt, use_fallback_model=True)
+                     return call_llm_raw(prompt, use_fallback_model=True)
                 last_error_msg = "⚠️ AI service model temporarily disabled."
                 continue
             elif response.status_code == 400:
@@ -87,7 +84,6 @@ def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
             response.raise_for_status()
             data = response.json()
             
-            # ... processing
             if "choices" in data and len(data["choices"]) > 0:
                 content = data["choices"][0].get("message", {}).get("content", "")
                 if not content:
@@ -100,9 +96,8 @@ def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
                 logging.error("API failed with embedded error on attempt %d: %s", attempt, error_message)
                 last_error_msg = "⚠️ AI service temporarily unavailable. Please try again later."
                 
-                # If the error is model-related or massive failure, attempt to switch model
                 if attempt == 1 and not use_fallback_model:
-                     return call_llm(prompt, use_fallback_model=True)
+                     return call_llm_raw(prompt, use_fallback_model=True)
                      
                 continue
             else:
@@ -122,6 +117,28 @@ def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
             
     return last_error_msg
 
+@st.cache_data(show_spinner=False)
+def _cached_call_llm(prompt: str, use_fallback_model: bool) -> str:
+    """Cached wrapper that raises APIError on failure so Streamlit won't cache it."""
+    res = call_llm_raw(prompt, use_fallback_model)
+    if res.startswith("⚠️") or res.startswith("Error"):
+        raise APIError(res)
+    return res
+
+def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
+    """Wrapper that leverages caching and handles exceptions gracefully."""
+    try:
+        return _cached_call_llm(prompt, use_fallback_model)
+    except APIError as e:
+        return str(e)
+
+def extract_json(text: str) -> str:
+    """Safely extracts the first valid JSON object starting with '{' and ending with '}'."""
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        return text[start:end+1]
+    return text
 
 def _get_safe_field(data: dict, key: str) -> str:
     """Helper to ensure empty fields are explicitly treated to prevent hallucination."""
@@ -149,7 +166,6 @@ def generate_resume(data: dict) -> str:
     
     return call_llm(prompt)
 
-
 def generate_cover_letter(data: dict) -> str:
     """Generates a concise Cover Letter strictly mapped to actual skills."""
     name = data.get('name', '').strip()
@@ -169,11 +185,9 @@ def generate_cover_letter(data: dict) -> str:
     
     return call_llm(prompt)
 
-
 def generate_portfolio_data(data: dict) -> dict:
     """
     Generates JSON payload for the Portfolio generator.
-    Raises ValueError if strict JSON isn't returned.
     """
     name = data.get('name', '').strip()
     
@@ -190,19 +204,17 @@ def generate_portfolio_data(data: dict) -> dict:
     
     # Check if raw_response is a fallback error message
     if raw_response.startswith("⚠️"):
-        # We simulate a fallback empty JSON if API fails, so the app doesn't crash but shows "Not specified"
         return {"about": raw_response, "projects": []}
     
-    # Robust JSON extraction using python parsing mechanics to strip extraneous text
-    import re
-    match = re.search(r'\{(?:[^{}]|(?R))*\}|\{.*\}', raw_response, re.DOTALL)
-    if match:
-        json_str = match.group(0)
-    else:
-        json_str = raw_response # fallback
+    # Robust JSON extraction
+    json_str = extract_json(raw_response)
         
     try:
         json_data = json.loads(json_str.strip())
+        if not isinstance(json_data, dict):
+            raise ValueError("Expected dictionary structure")
+        json_data.setdefault("about", "Not specified")
+        json_data.setdefault("projects", [])
         return json_data
     except Exception as e:
         logging.error("Failed to parse LLM Output into JSON: %s\nRAW OUTPUT: %s", str(e), raw_response)

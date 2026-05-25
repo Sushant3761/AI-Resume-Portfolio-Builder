@@ -256,7 +256,20 @@
 
         <section id="contact" class="reveal">
             <h2>Initialization Complete</h2>
-            <p>{{ contact | e }}</p>
+            <div style="display: flex; flex-direction: column; gap: 0.8rem; margin-top: 1rem;">
+                {% if email %}
+                <p style="margin: 0;">&gt; EMAIL: <a href="mailto:{{ email | e }}" style="color: #c084fc; text-decoration: none; font-family: 'Fira Code', monospace;">{{ email | e }}</a></p>
+                {% endif %}
+                {% if github %}
+                <p style="margin: 0;">&gt; GITHUB: <a href="{{ github | e }}" target="_blank" style="color: #c084fc; text-decoration: none; font-family: 'Fira Code', monospace;">{{ github | e }}</a></p>
+                {% endif %}
+                {% if linkedin %}
+                <p style="margin: 0;">&gt; LINKEDIN: <a href="{{ linkedin | e }}" target="_blank" style="color: #c084fc; text-decoration: none; font-family: 'Fira Code', monospace;">{{ linkedin | e }}</a></p>
+                {% endif %}
+                {% if not email and not github and not linkedin %}
+                <p style="margin: 0;">&gt; Connection details not specified.</p>
+                {% endif %}
+            </div>
         </section>
 
         <footer>

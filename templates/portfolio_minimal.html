@@ -98,8 +98,18 @@
 
     <section id="contact">
         <h2>Contact</h2>
-        <p>{{ contact | e }}</p>
-        <p><a href="mailto:contact@example.com" style="color: var(--accent-color);">Reach out via email</a></p>
+        {% if email %}
+        <p>Email: <a href="mailto:{{ email | e }}" style="color: var(--accent-color);">{{ email | e }}</a></p>
+        {% endif %}
+        {% if github %}
+        <p>GitHub: <a href="{{ github | e }}" target="_blank" style="color: var(--accent-color);">{{ github | e }}</a></p>
+        {% endif %}
+        {% if linkedin %}
+        <p>LinkedIn: <a href="{{ linkedin | e }}" target="_blank" style="color: var(--accent-color);">{{ linkedin | e }}</a></p>
+        {% endif %}
+        {% if not email and not github and not linkedin %}
+        <p>No connection details specified.</p>
+        {% endif %}
     </section>
 
     <footer>
