@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -10,14 +13,13 @@ from utils.resume_generator import (
 )
 from utils.portfolio_generator import build_portfolio_html
 from utils.similarity import (
-    calculate_similarity,
-    generate_improvement_suggestions
+    analyze_ats_match
 )
-from utils.pdf_generator import (
-    create_resume_pdf,
-    create_cover_letter_pdf,
-    _clean_filename
-)
+import re
+def _clean_filename(filename: str) -> str:
+    """Removes special characters from filenames to prevent OS path issues."""
+    filename = os.path.basename(filename)
+    return re.sub(r'[^\w\-_\. ]', '_', filename)
 
 def main():
     st.set_page_config(page_title="AI Career Developer Platform", page_icon="💻", layout="wide")
@@ -100,19 +102,7 @@ def main():
                     st.success("Resume Generated Successfully!")
                     st.markdown("### Preview")
                     st.markdown(resume_output) # Rendered markdown
-                    
-                    safe_name = _clean_filename(name) if name else "user"
-                    pdf_path = f"resume_{safe_name}.pdf"
-                    
-                    pdf_result = create_resume_pdf(resume_output, pdf_path)
-                    if os.path.exists(pdf_result):
-                        with open(pdf_result, "rb") as pdf_file:
-                            st.download_button(
-                                label="Download Resume (PDF)",
-                                data=pdf_file,
-                                file_name=pdf_path,
-                                mime="application/pdf"
-                            )
+                    st.info("💡 To save as an ATS-friendly PDF: Press **Ctrl+P** (Windows) or **Cmd+P** (Mac) and select 'Save as PDF'.")
 
     with tab2:
         st.subheader("Generate Cover Letter")
@@ -127,19 +117,7 @@ def main():
                     st.success("Cover Letter Generated Successfully!")
                     st.markdown("### Preview")
                     st.markdown(cl_output)
-                    
-                    safe_name = _clean_filename(name) if name else "user"
-                    pdf_path = f"coverletter_{safe_name}.pdf"
-                    
-                    pdf_result = create_cover_letter_pdf(cl_output, pdf_path)
-                    if os.path.exists(pdf_result):
-                        with open(pdf_result, "rb") as pdf_file:
-                            st.download_button(
-                                label="Download Cover Letter (PDF)",
-                                data=pdf_file,
-                                file_name=pdf_path,
-                                mime="application/pdf"
-                            )
+                    st.info("💡 To save as a PDF: Press **Ctrl+P** (Windows) or **Cmd+P** (Mac) and select 'Save as PDF'.")
 
     with tab3:
         st.subheader("Generate Live Portfolio Website")
@@ -190,14 +168,16 @@ def main():
             elif not skills and not projects and not experience:
                 st.warning("Please provide at least your Skills or Projects to calculate a match score.")
             else:
-                st.toast("Calculating Similarity...", icon='⏳')
-                with st.spinner("Vectorizing text properties with scikit-learn TF-IDF..."):
+                st.toast("Analyzing Semantic Fit with AI...", icon='⏳')
+                with st.spinner("LLM is evaluating your profile against the JD..."):
                     combined_user_text = f"{skills} {projects} {experience} {education} {achievements}"
                     
-                    match_score = calculate_similarity(combined_user_text, job_description)
-                    missing_keywords = generate_improvement_suggestions(combined_user_text, job_description)
+                    ats_result = analyze_ats_match(combined_user_text, job_description)
+                    match_score = ats_result.get("match_score", 0)
+                    missing_keywords = ats_result.get("missing_skills", [])
+                    suggestions = ats_result.get("suggestions", [])
 
-                    st.markdown("### ATS Analysis Result")
+                    st.markdown("### ATS AI Analysis Result")
                     
                     if match_score >= 80:
                         st.success(f"Excellent Match! Score: {match_score}%")
@@ -209,12 +189,16 @@ def main():
                     st.progress(match_score / 100.0)
 
                     if missing_keywords:
-                        st.markdown("**Missed Keywords from JD (Consider adding these to your skills/experience):**")
-                        # Format as chips/badges visually
+                        st.markdown("**Critical Missing Skills (Consider adding these to your profile):**")
                         for kw in missing_keywords:
                             st.markdown(f"🔴 `{kw}`")
                     else:
                         st.success("Amazing! Your profile covers all major technical keywords found in the Job Description.")
+                        
+                    if suggestions:
+                        st.markdown("**AI Suggestions for Improvement:**")
+                        for sug in suggestions:
+                            st.markdown(f"💡 {sug}")
 
 if __name__ == "__main__":
     main()

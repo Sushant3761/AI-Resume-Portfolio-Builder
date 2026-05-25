@@ -1,6 +1,5 @@
 streamlit
 requests
-scikit-learn
 markdown
-xhtml2pdf
 jinja2
+python-dotenv

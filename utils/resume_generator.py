@@ -9,20 +9,14 @@ from .prompts import RESUME_PROMPT, COVER_LETTER_PROMPT, PORTFOLIO_PROMPT, ANTI_
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-PRIMARY_MODEL = "mistralai/mistral-7b-instruct"
+PRIMARY_MODEL ="meta-llama/llama-3-8b-instruct:free"
 FALLBACK_MODEL = "openai/gpt-3.5-turbo"
 
-def get_api_key() -> str:
-    """Safely retrieves the API key, favoring Streamlit Secrets over runtime OS Env variables."""
-    # Priority 1: Streamlit Secrets
+def get_api_key():
     try:
-        if "OPENROUTER_API_KEY" in st.secrets:
-            return st.secrets["OPENROUTER_API_KEY"]
-    except Exception as e:
-        logging.debug("Could not read from st.secrets: %s", str(e))
-        
-    # Priority 2: OS Environment
-    return os.environ.get("OPENROUTER_API_KEY", "")
+        return st.secrets["OPENROUTER_API_KEY"]
+    except Exception:
+        return os.environ.get("OPENROUTER_API_KEY")
 
 def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
     """
@@ -31,6 +25,8 @@ def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
     """
     api_key = get_api_key()
     
+    print(f"API Key Present: {bool(api_key)}")
+    
     if not api_key:
         logging.error("API Key check failed: OPENROUTER_API_KEY is None or empty.")
         return "⚠️ API key not configured. Add it to .env (local) or Streamlit Secrets (cloud)."
@@ -38,8 +34,8 @@ def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://example.com/myapp", # Recommended required headers for OpenRouter
-        "X-Title": "AI Career Builder"
+        "HTTP-Referer": "http://localhost:8501",
+        "X-Title": "AI Career Platform"
     }
     
     current_model = FALLBACK_MODEL if use_fallback_model else PRIMARY_MODEL
@@ -48,16 +44,10 @@ def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
         "model": current_model,
         "messages": [
             {
-                "role": "system",
-                "content": "You are a highly analytical technical advisor following explicit constraints."
-            },
-            {
                 "role": "user",
                 "content": prompt
             }
-        ],
-        "temperature": 0.5,
-        "max_tokens": 800
+        ]
     }
     
     max_retries = 3
@@ -67,17 +57,32 @@ def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
     while attempt < max_retries:
         attempt += 1
         try:
+            print(f"Attempt: {attempt}")
             logging.debug(f"Attempting API call {attempt}/{max_retries} with model {current_model}")
             response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
             
-            # Debug visibility explicitly logging status code and partial body length or text (safely)
-            logging.error(f"DEBUG - API Status: {response.status_code}")
-            logging.error(f"DEBUG - API Response snippet: {response.text[:200]}...")
+            print("STATUS:", response.status_code)
+            print("RESPONSE:", response.text[:300])
             
-            if response.status_code == 429:
+            if response.status_code == 401:
+                last_error_msg = "⚠️ Invalid API Key. Please check your configuration."
+                break
+            elif response.status_code == 402:
+                last_error_msg = "⚠️ API quota exceeded. Please check your billing details."
+                break
+            elif response.status_code == 429:
                 logging.error("API failed: Rate limit exceeded (429) on attempt %d", attempt)
                 last_error_msg = "⚠️ AI service rate limited. Please wait a few seconds and try again."
                 continue
+            elif response.status_code == 404:
+                logging.error("API failed: Model Not Found (404) on attempt %d", attempt)
+                if attempt == 1 and not use_fallback_model:
+                     return call_llm(prompt, use_fallback_model=True)
+                last_error_msg = "⚠️ AI service model temporarily disabled."
+                continue
+            elif response.status_code == 400:
+                last_error_msg = "⚠️ Bad API request. Check the input format."
+                break
                 
             response.raise_for_status()
             data = response.json()
