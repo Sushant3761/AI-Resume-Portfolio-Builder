@@ -222,3 +222,47 @@ def generate_portfolio_data(data: dict) -> dict:
             "about": "⚠️ Unable to generate portfolio data layout. AI returned unstructured text.",
             "projects": []
         }
+
+def improve_resume_with_ai(current_text: str, target_role: str) -> str:
+    """
+    Refines and optimizes the current resume content using the LLM.
+    Enforces action verbs, stronger metrics, and strict anti-hallucination.
+    """
+    prompt = f"""You are an executive resume writer. Take the following resume and improve it:
+- Enhance description lines with strong, punchy action verbs.
+- Elevate metrics where possible to emphasize business impact.
+- Tailor technical vocabulary closer to a standard {target_role} profile.
+- Strictly do NOT invent fake education details, certifications, or past employers.
+- Keep the structure identical.
+
+Current Resume:
+{current_text}
+
+Return ONLY the upgraded markdown resume content. Do not write any introduction, commentary, or explanation.
+"""
+    return call_llm(prompt)
+
+def refine_cover_letter_tone(current_text: str, tone: str) -> str:
+    """
+    Adjusts the tone of the cover letter according to user requests.
+    Tone can be 'shorter', 'more professional', or 'more technical'.
+    """
+    tone_instruction = ""
+    if tone == "shorter":
+        tone_instruction = "Make the text highly concise, removing fluff or redundant sentences while preserving key accomplishments. Aim for ~150 words."
+    elif tone == "more professional":
+        tone_instruction = "Elevate the language to a polished, executive-level tone. Emphasize professionalism, industry maturity, and crisp alignment."
+    elif tone == "more technical":
+        tone_instruction = "Incorporate deep, industry-standard technology terms and vocabulary. Align engineering achievements with professional language."
+        
+    prompt = f"""You are an expert copywriter. Take the following cover letter and adjust its tone:
+- Tone adjustment request: {tone_instruction}
+- Do NOT invent fake jobs, names, or credentials.
+- Keep the core candidate accomplishments intact.
+
+Current Cover Letter:
+{current_text}
+
+Return ONLY the refined markdown cover letter content. Do not write any intro, outro, or conversational filler.
+"""
+    return call_llm(prompt)

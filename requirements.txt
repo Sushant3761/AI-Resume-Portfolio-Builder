@@ -3,3 +3,5 @@ requests
 markdown
 jinja2
 python-dotenv
+fpdf2
+python-docx

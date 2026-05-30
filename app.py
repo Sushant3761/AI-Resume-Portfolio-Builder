@@ -9,12 +9,16 @@ import streamlit.components.v1 as components
 from utils.resume_generator import (
     generate_resume,
     generate_cover_letter,
-    generate_portfolio_data
+    generate_portfolio_data,
+    improve_resume_with_ai,
+    refine_cover_letter_tone
 )
 from utils.portfolio_generator import build_portfolio_html
 from utils.similarity import (
     analyze_ats_match
 )
+from utils.pdf_generator import compile_pdf
+from utils.docx_generator import compile_docx
 import re
 
 def _clean_filename(filename: str) -> str:
@@ -58,15 +62,6 @@ def main():
             margin-bottom: 1.8rem;
             font-size: 1.1rem;
             font-weight: 400;
-        }
-        
-        /* Slate Styled Section Panels */
-        .section-panel {
-            background-color: rgba(30, 41, 59, 0.35);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 14px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
         }
         
         /* Interactive Neon Gradient Buttons */
@@ -141,7 +136,12 @@ def main():
         "experience": "",
         "projects": "",
         "achievements": "",
-        "job_description": ""
+        "job_description": "",
+        "resume_text": "",
+        "resume_versions": [],
+        "cover_letter_text": "",
+        "cover_letter_versions": [],
+        "ats_match_result": None
     }
     
     for key, default in profile_fields.items():
@@ -218,40 +218,192 @@ def main():
     tab1, tab2, tab3, tab4 = st.tabs(["📄 Resume", "✉️ Cover Letter", "🌐 Portfolio Website", "📊 ATS Scorer"])
 
     with tab1:
-        st.subheader("Generate Resume")
+        st.subheader("Generate & Professional Editor")
         if not is_profile_ready:
             st.warning("⚠️ Please provide 'Name' and 'Target Job Role' in the inputs above to unlock this generator.")
         else:
-            if st.button("Generate / Preview Professional Resume"):
-                st.toast("Generating Resume...", icon='⏳')
-                with st.spinner("AI is analyzing and formatting your resume..."):
-                    resume_output = generate_resume(user_data)
-                    
-                    if resume_output.startswith("⚠️") or resume_output.startswith("Error"):
-                        st.error(resume_output)
-                    else:
-                        st.success("Resume ready!")
-                        st.markdown("### Preview")
-                        st.markdown(resume_output)
-                        st.info("💡 To save as an ATS-friendly PDF: Press **Ctrl+P** (Windows) or **Cmd+P** (Mac) and select 'Save as PDF'.")
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                if st.button("🔁 Generate / Regenerate Base Resume", type="secondary"):
+                    st.toast("Generating base resume...", icon='⏳')
+                    with st.spinner("AI is formatting your resume..."):
+                        resume_output = generate_resume(user_data)
+                        if not (resume_output.startswith("⚠️") or resume_output.startswith("Error")):
+                            st.session_state["resume_text"] = resume_output
+                            st.session_state["resume_versions"] = [resume_output]
+                            st.toast("Base resume generated successfully!", icon="✅")
+                            st.rerun()
+            
+            # If resume_text exists in session_state, display editor and tools
+            if st.session_state["resume_text"]:
+                st.markdown("### ✏️ Interactive Resume Editor")
+                edited_resume = st.text_area(
+                    "You can modify any text below directly. Click 'Save & Recheck' to update downloads and ATS review.",
+                    value=st.session_state["resume_text"],
+                    key="live_resume_editor",
+                    height=450
+                )
+                
+                # Version restoration bar
+                if len(st.session_state["resume_versions"]) > 1:
+                    st.markdown("**Restoration History:**")
+                    cols = st.columns(min(len(st.session_state["resume_versions"]), 5))
+                    for idx, val in enumerate(st.session_state["resume_versions"][:5]):
+                        with cols[idx]:
+                            if st.button(f"Version {idx+1}", key=f"restore_res_{idx}"):
+                                st.session_state["resume_text"] = val
+                                st.toast(f"Rolled back to Version {idx+1}!", icon="⏪")
+                                st.rerun()
+                
+                # Control Actions Grid
+                act1, act2 = st.columns(2)
+                with act1:
+                    if st.button("💾 Save Changes & Recheck ATS", type="primary", use_container_width=True):
+                        new_text = st.session_state["live_resume_editor"]
+                        st.session_state["resume_text"] = new_text
+                        if not st.session_state["resume_versions"] or st.session_state["resume_versions"][-1] != new_text:
+                            st.session_state["resume_versions"].append(new_text)
+                        
+                        # Trigger ATS re-check if JD is present
+                        if st.session_state.job_description.strip():
+                            with st.spinner("Recalculating ATS fit score..."):
+                                ats_result = analyze_ats_match(new_text, st.session_state.job_description)
+                                st.session_state["ats_match_result"] = ats_result
+                        st.toast("Changes saved and ATS score updated!", icon="✅")
+                        st.rerun()
+                with act2:
+                    if st.button("🪄 AI ImproveAchievements", use_container_width=True):
+                        with st.spinner("AI is polishing achievements and metrics..."):
+                            improved = improve_resume_with_ai(st.session_state["live_resume_editor"], st.session_state.target_role)
+                            if not (improved.startswith("⚠️") or improved.startswith("Error")):
+                                st.session_state["resume_text"] = improved
+                                st.session_state["resume_versions"].append(improved)
+                                st.toast("Resume improved successfully!", icon="✨")
+                                st.rerun()
+                            else:
+                                st.error(improved)
+                                
+                # Direct PDF/Word Downloads
+                st.markdown("### ⬇️ Export / Download Options")
+                down1, down2 = st.columns(2)
+                with down1:
+                    pdf_bytes = compile_pdf(st.session_state["resume_text"])
+                    safe_name = _clean_filename(st.session_state.name)
+                    st.download_button(
+                        label="📄 Download ATS PDF",
+                        data=pdf_bytes,
+                        file_name=f"resume_{safe_name}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                with down2:
+                    docx_bytes = compile_docx(st.session_state["resume_text"])
+                    st.download_button(
+                        label="📝 Download Word DOCX",
+                        data=docx_bytes,
+                        file_name=f"resume_{safe_name}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
 
     with tab2:
-        st.subheader("Generate Cover Letter")
+        st.subheader("Generate & Professional Editor")
         if not is_profile_ready:
             st.warning("⚠️ Please provide 'Name' and 'Target Job Role' in the inputs above to unlock this generator.")
         else:
-            if st.button("Generate / Preview Tailored Cover Letter"):
-                st.toast("Generating Cover Letter...", icon='⏳')
-                with st.spinner("Writing the perfect introduction..."):
-                    cl_output = generate_cover_letter(user_data)
-                    
-                    if cl_output.startswith("⚠️") or cl_output.startswith("Error"):
-                        st.error(cl_output)
-                    else:
-                        st.success("Cover letter ready!")
-                        st.markdown("### Preview")
-                        st.markdown(cl_output)
-                        st.info("💡 To save as a PDF: Press **Ctrl+P** (Windows) or **Cmd+P** (Mac) and select 'Save as PDF'.")
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                if st.button("🔁 Generate / Regenerate Base Cover Letter", type="secondary"):
+                    st.toast("Generating base cover letter...", icon='⏳')
+                    with st.spinner("Writing tailored introduction..."):
+                        cl_output = generate_cover_letter(user_data)
+                        if not (cl_output.startswith("⚠️") or cl_output.startswith("Error")):
+                            st.session_state["cover_letter_text"] = cl_output
+                            st.session_state["cover_letter_versions"] = [cl_output]
+                            st.toast("Base cover letter generated successfully!", icon="✅")
+                            st.rerun()
+            
+            if st.session_state["cover_letter_text"]:
+                st.markdown("### ✏️ Interactive Cover Letter Editor")
+                edited_cl = st.text_area(
+                    "You can modify any text below directly. Click 'Save Changes' to update downloads.",
+                    value=st.session_state["cover_letter_text"],
+                    key="live_cl_editor",
+                    height=400
+                )
+                
+                # Restoration History
+                if len(st.session_state["cover_letter_versions"]) > 1:
+                    st.markdown("**Restoration History:**")
+                    cols = st.columns(min(len(st.session_state["cover_letter_versions"]), 5))
+                    for idx, val in enumerate(st.session_state["cover_letter_versions"][:5]):
+                        with cols[idx]:
+                            if st.button(f"Version {idx+1}", key=f"restore_cl_{idx}"):
+                                st.session_state["cover_letter_text"] = val
+                                st.toast(f"Rolled back to Version {idx+1}!", icon="⏪")
+                                st.rerun()
+                
+                # Tone polishing actions
+                st.markdown("**🎭 Quick AI Tone Refinements:**")
+                tone1, tone2, tone3, save_cl = st.columns(4)
+                with tone1:
+                    if st.button("✂️ Shorter", use_container_width=True):
+                        with st.spinner("Making it concise..."):
+                            shortened = refine_cover_letter_tone(st.session_state["live_cl_editor"], "shorter")
+                            if not (shortened.startswith("⚠️") or shortened.startswith("Error")):
+                                st.session_state["cover_letter_text"] = shortened
+                                st.session_state["cover_letter_versions"].append(shortened)
+                                st.toast("Cover letter shortened!", icon="✨")
+                                st.rerun()
+                with tone2:
+                    if st.button("💼 Professional", use_container_width=True):
+                        with st.spinner("Elevating tone..."):
+                            prof = refine_cover_letter_tone(st.session_state["live_cl_editor"], "more professional")
+                            if not (prof.startswith("⚠️") or prof.startswith("Error")):
+                                st.session_state["cover_letter_text"] = prof
+                                st.session_state["cover_letter_versions"].append(prof)
+                                st.toast("Tone made professional!", icon="✨")
+                                st.rerun()
+                with tone3:
+                    if st.button("💻 Technical", use_container_width=True):
+                        with st.spinner("Adding technical depth..."):
+                            tech = refine_cover_letter_tone(st.session_state["live_cl_editor"], "more technical")
+                            if not (tech.startswith("⚠️") or tech.startswith("Error")):
+                                st.session_state["cover_letter_text"] = tech
+                                st.session_state["cover_letter_versions"].append(tech)
+                                st.toast("Tone made more technical!", icon="✨")
+                                st.rerun()
+                with save_cl:
+                    if st.button("💾 Save Changes", type="primary", use_container_width=True):
+                        new_cl_text = st.session_state["live_cl_editor"]
+                        st.session_state["cover_letter_text"] = new_cl_text
+                        if not st.session_state["cover_letter_versions"] or st.session_state["cover_letter_versions"][-1] != new_cl_text:
+                            st.session_state["cover_letter_versions"].append(new_cl_text)
+                        st.toast("Cover letter saved!", icon="✅")
+                        st.rerun()
+                
+                # Direct Downloads
+                st.markdown("### ⬇️ Export / Download Options")
+                down1, down2 = st.columns(2)
+                with down1:
+                    pdf_bytes_cl = compile_pdf(st.session_state["cover_letter_text"])
+                    safe_name = _clean_filename(st.session_state.name)
+                    st.download_button(
+                        label="📄 Download PDF Letter",
+                        data=pdf_bytes_cl,
+                        file_name=f"cover_letter_{safe_name}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                with down2:
+                    docx_bytes_cl = compile_docx(st.session_state["cover_letter_text"])
+                    st.download_button(
+                        label="📝 Download Word DOCX",
+                        data=docx_bytes_cl,
+                        file_name=f"cover_letter_{safe_name}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
 
     with tab3:
         st.subheader("Generate Live Portfolio Website")
@@ -297,38 +449,50 @@ def main():
         elif not st.session_state.skills.strip() and not st.session_state.projects.strip() and not st.session_state.experience.strip():
             st.warning("Please provide at least your Skills, Experience, or Projects to evaluate.")
         else:
+            # Check if there is an existing ATS score calculation in session state
+            if st.session_state["ats_match_result"]:
+                ats_result = st.session_state["ats_match_result"]
+                match_score = ats_result.get("match_score", 0)
+                missing_keywords = ats_result.get("missing_skills", [])
+                suggestions = ats_result.get("suggestions", [])
+
+                st.markdown("### ATS AI Analysis Result")
+                
+                if match_score >= 80:
+                    st.success(f"Excellent Match! Score: {match_score}%")
+                elif match_score >= 50:
+                    st.info(f"Good Match! Score: {match_score}%")
+                else:
+                    st.warning(f"Needs Improvement. Score: {match_score}%")
+                    
+                st.progress(match_score / 100.0)
+
+                if missing_keywords:
+                    st.markdown("**Critical Missing Skills (Consider adding these to your profile):**")
+                    for kw in missing_keywords:
+                        st.markdown(f"🔴 `{kw}`")
+                else:
+                    st.success("Amazing! Your profile covers all major technical keywords found in the Job Description.")
+                    
+                if suggestions:
+                    st.markdown("**AI Suggestions for Improvement:**")
+                    for sug in suggestions:
+                        st.markdown(f"💡 {sug}")
+            
+            # Button to calculate / recalculate manually
             if st.button("Calculate / Recalculate ATS Match Score"):
                 st.toast("Analyzing Semantic Fit with AI...", icon='⏳')
                 with st.spinner("LLM is evaluating your profile against the JD..."):
-                    combined_user_text = f"{st.session_state.skills} {st.session_state.projects} {st.session_state.experience} {st.session_state.education} {st.session_state.achievements}"
+                    # Use the edited resume text if available, otherwise compile default profile fields
+                    if st.session_state["resume_text"]:
+                        combined_user_text = st.session_state["resume_text"]
+                    else:
+                        combined_user_text = f"{st.session_state.skills} {st.session_state.projects} {st.session_state.experience} {st.session_state.education} {st.session_state.achievements}"
                     
                     ats_result = analyze_ats_match(combined_user_text, st.session_state.job_description)
-                    match_score = ats_result.get("match_score", 0)
-                    missing_keywords = ats_result.get("missing_skills", [])
-                    suggestions = ats_result.get("suggestions", [])
-
-                    st.markdown("### ATS AI Analysis Result")
-                    
-                    if match_score >= 80:
-                        st.success(f"Excellent Match! Score: {match_score}%")
-                    elif match_score >= 50:
-                        st.info(f"Good Match! Score: {match_score}%")
-                    else:
-                        st.warning(f"Needs Improvement. Score: {match_score}%")
-                        
-                    st.progress(match_score / 100.0)
-
-                    if missing_keywords:
-                        st.markdown("**Critical Missing Skills (Consider adding these to your profile):**")
-                        for kw in missing_keywords:
-                            st.markdown(f"🔴 `{kw}`")
-                    else:
-                        st.success("Amazing! Your profile covers all major technical keywords found in the Job Description.")
-                        
-                    if suggestions:
-                        st.markdown("**AI Suggestions for Improvement:**")
-                        for sug in suggestions:
-                            st.markdown(f"💡 {sug}")
+                    st.session_state["ats_match_result"] = ats_result
+                    st.toast("ATS analysis completed!", icon="✅")
+                    st.rerun()
 
 if __name__ == "__main__":
     main()
