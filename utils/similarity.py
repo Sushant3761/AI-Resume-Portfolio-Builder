@@ -1,15 +1,10 @@
 import json
 import logging
-from .resume_generator import call_llm
+from .resume_generator import call_llm, extract_json
 from .prompts import ATS_SCORER_PROMPT
 
-def extract_json(text: str) -> str:
-    """Safely extracts the first valid JSON object starting with '{' and ending with '}'."""
-    start = text.find('{')
-    end = text.rfind('}')
-    if start != -1 and end != -1 and end > start:
-        return text[start:end+1]
-    return text
+
+logger = logging.getLogger(__name__)
 
 def analyze_ats_match(user_text: str, job_description: str) -> dict:
     """
@@ -32,31 +27,40 @@ def analyze_ats_match(user_text: str, job_description: str) -> dict:
     
     if raw_response.startswith("⚠️"):
         return {
-            "match_score": 0,
-            "missing_skills": ["API Error"],
-            "suggestions": [raw_response]
+            "match_score": None,
+            "missing_skills": [],
+            "suggestions": [],
+            "error": "ATS analysis could not be completed. Please try again.",
         }
     
     # Robust JSON extraction
-    json_str = extract_json(raw_response)
-        
     try:
+        json_str = extract_json(raw_response)
         data = json.loads(json_str.strip())
-        # Validate that the returned data has the required fields
         if not isinstance(data, dict):
-            raise ValueError("Expected dictionary")
-        # Ensure default keys exist
-        data.setdefault("match_score", 0)
-        data.setdefault("missing_skills", [])
-        data.setdefault("suggestions", [])
-        return data
-    except Exception as e:
-        logging.error("Failed to parse ATS LLM output into JSON: %s\nRAW OUTPUT: %s", str(e), raw_response)
+            raise ValueError("Expected object")
+        required_fields = {"match_score", "missing_skills", "suggestions"}
+        if not required_fields.issubset(data):
+            raise ValueError("Missing required ATS fields")
+        match_score = data["match_score"]
+        missing_skills = data["missing_skills"]
+        suggestions = data["suggestions"]
+        if isinstance(match_score, bool) or not isinstance(match_score, int) or not 0 <= match_score <= 100:
+            raise ValueError("Invalid match score")
+        if not isinstance(missing_skills, list) or not all(isinstance(item, str) for item in missing_skills):
+            raise ValueError("Invalid missing skills")
+        if not isinstance(suggestions, list) or not all(isinstance(item, str) for item in suggestions):
+            raise ValueError("Invalid suggestions")
         return {
-            "match_score": 0,
-            "missing_skills": ["Error parsing AI response"],
-            "suggestions": [
-                "The AI returned unstructured text. Please try calculating again.",
-                f"Raw snippet: {raw_response[:200]}"
-            ]
+            "match_score": match_score,
+            "missing_skills": missing_skills,
+            "suggestions": suggestions,
+        }
+    except (ValueError, TypeError) as exc:
+        logger.warning("ATS response could not be parsed or validated (category=%s)", type(exc).__name__)
+        return {
+            "match_score": None,
+            "missing_skills": [],
+            "suggestions": [],
+            "error": "The AI returned an incomplete or malformed ATS result. Please try calculating again.",
         }
