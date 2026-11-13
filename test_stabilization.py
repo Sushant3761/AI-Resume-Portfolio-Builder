@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from unittest.mock import Mock, call, patch
+from streamlit.errors import StreamlitSecretNotFoundError
 
 import app as streamlit_app
 from utils import docx_generator, pdf_generator, resume_generator, similarity
@@ -20,6 +21,58 @@ def make_response(status, body=None, headers=None):
 
 
 class OpenRouterReliabilityTests(unittest.TestCase):
+    def test_api_key_comes_from_process_environment(self):
+        with patch.object(resume_generator.st, "secrets", {}, create=True), \
+                patch.dict(os.environ, {"OPENROUTER_API_KEY": " env-test-key "}):
+            self.assertEqual(resume_generator.get_api_key(), "env-test-key")
+
+    def test_api_key_falls_back_to_streamlit_secrets(self):
+        with patch.object(resume_generator.st, "secrets", {"OPENROUTER_API_KEY": "secret-test-key"}, create=True), \
+                patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            self.assertEqual(resume_generator.get_api_key(), "secret-test-key")
+
+    def test_empty_environment_api_key_falls_back_to_streamlit_secrets(self):
+        with patch.object(resume_generator.st, "secrets", {"OPENROUTER_API_KEY": "secret-test-key"}, create=True), \
+                patch.dict(os.environ, {"OPENROUTER_API_KEY": "   "}):
+            self.assertEqual(resume_generator.get_api_key(), "secret-test-key")
+
+    def test_environment_api_key_takes_priority_over_streamlit_secrets(self):
+        with patch.object(resume_generator.st, "secrets", {"OPENROUTER_API_KEY": "secret-test-key"}, create=True), \
+                patch.dict(os.environ, {"OPENROUTER_API_KEY": "env-test-key"}):
+            self.assertEqual(resume_generator.get_api_key(), "env-test-key")
+
+    def test_missing_streamlit_secrets_is_safe_and_missing_key_is_controlled(self):
+        missing_secrets = Mock()
+        missing_secrets.get.side_effect = StreamlitSecretNotFoundError("no secrets")
+        with patch.object(resume_generator.st, "secrets", missing_secrets, create=True), \
+                patch.dict(os.environ, {}, clear=False), \
+                patch.object(resume_generator.requests, "post") as post:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            self.assertIsNone(resume_generator.get_api_key())
+            result = resume_generator.call_llm_raw("prompt")
+        self.assertIn("OPENROUTER_API_KEY", result)
+        self.assertNotIn("no secrets", result)
+        post.assert_not_called()
+
+    def test_unexpected_streamlit_secrets_error_is_not_suppressed(self):
+        broken_secrets = Mock()
+        broken_secrets.get.side_effect = RuntimeError("unexpected programming failure")
+        with patch.object(resume_generator.st, "secrets", broken_secrets, create=True), \
+                patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}):
+            with self.assertRaisesRegex(RuntimeError, "unexpected programming failure"):
+                resume_generator.get_api_key()
+
+    def test_missing_key_does_not_log_or_return_a_secret_value(self):
+        marker = "never-print-this-key"
+        with patch.object(resume_generator.st, "secrets", {}, create=True), \
+                patch.dict(os.environ, {}, clear=False), \
+                self.assertLogs(resume_generator.logger, level=logging.ERROR) as captured:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            result = resume_generator.call_llm_raw("prompt")
+        output = result + "\n" + "\n".join(captured.output)
+        self.assertNotIn(marker, output)
+
     def test_retry_after_parses_seconds_and_http_dates(self):
         self.assertEqual(resume_generator._retry_after_seconds("2.5"), 2.5)
         now = datetime(2025, 1, 1, tzinfo=timezone.utc)

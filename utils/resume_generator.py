@@ -8,6 +8,7 @@ from email.utils import parsedate_to_datetime
 
 import requests
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 from .prompts import RESUME_PROMPT, COVER_LETTER_PROMPT, PORTFOLIO_PROMPT, ANTI_HALLUCINATION
 
 logger = logging.getLogger(__name__)
@@ -51,8 +52,22 @@ def _setting(name: str, default: str = "") -> str:
 
 
 def get_api_key():
-    """Load the API key without logging or exposing its value."""
-    return _setting("OPENROUTER_API_KEY") or None
+    """Load the API key from the process environment, then Streamlit secrets.
+
+    Render provides environment variables directly. Prefer those over any
+    Streamlit secret value while keeping local dotenv and Streamlit support.
+    Never log or expose the credential value.
+    """
+    value = os.environ.get("OPENROUTER_API_KEY", "")
+    if value and value.strip():
+        return value.strip()
+
+    try:
+        value = st.secrets.get("OPENROUTER_API_KEY")
+    except (KeyError, StreamlitSecretNotFoundError):
+        # Streamlit raises when no secrets file/configuration exists.
+        value = None
+    return str(value).strip() if value is not None and str(value).strip() else None
 
 
 def _generation_configuration():
