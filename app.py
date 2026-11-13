@@ -17,7 +17,7 @@ from utils.portfolio_generator import build_portfolio_html
 from utils.similarity import (
     analyze_ats_match
 )
-from utils.pdf_generator import compile_pdf
+from utils.pdf_generator import PDFGenerationError, compile_pdf
 from utils.docx_generator import compile_docx
 import re
 
@@ -25,6 +25,64 @@ def _clean_filename(filename: str) -> str:
     """Removes special characters from filenames to prevent OS path issues."""
     filename = os.path.basename(filename)
     return re.sub(r'[^\w\-_\. ]', '_', filename)
+
+
+def _restore_document_version(session_state, text_key: str, versions_key: str, editor_key: str, index: int) -> bool:
+    """Restore a saved document version and synchronize its editor widget state."""
+    versions = session_state.get(versions_key, [])
+    if not isinstance(versions, list) or not 0 <= index < len(versions):
+        return False
+    restored_text = versions[index]
+    session_state[text_key] = restored_text
+    session_state[editor_key] = restored_text
+    return True
+
+
+def _restore_resume_version(index: int) -> None:
+    if _restore_document_version(
+        st.session_state, "resume_text", "resume_versions", "live_resume_editor", index
+    ):
+        st.toast(f"Rolled back to Version {index + 1}!", icon="⏪")
+
+
+def _restore_cover_letter_version(index: int) -> None:
+    if _restore_document_version(
+        st.session_state, "cover_letter_text", "cover_letter_versions", "live_cl_editor", index
+    ):
+        st.toast(f"Rolled back to Version {index + 1}!", icon="⏪")
+
+
+def _render_ats_result(ats_result: dict) -> None:
+    """Render either a validated ATS score or its controlled error state."""
+    if ats_result.get("error"):
+        st.error(ats_result["error"])
+        return
+
+    match_score = ats_result["match_score"]
+    missing_keywords = ats_result["missing_skills"]
+    suggestions = ats_result["suggestions"]
+
+    st.markdown("### ATS AI Analysis Result")
+    if match_score >= 80:
+        st.success(f"Excellent Match! Score: {match_score}%")
+    elif match_score >= 50:
+        st.info(f"Good Match! Score: {match_score}%")
+    else:
+        st.warning(f"Needs Improvement. Score: {match_score}%")
+    st.progress(match_score / 100.0)
+
+    if missing_keywords:
+        st.markdown("**Critical Missing Skills (Consider adding these to your profile):**")
+        for keyword in missing_keywords:
+            st.markdown(f"🔴 `{keyword}`")
+    else:
+        st.success("Amazing! Your profile covers all major technical keywords found in the Job Description.")
+
+    if suggestions:
+        st.markdown("**AI Suggestions for Improvement:**")
+        for suggestion in suggestions:
+            st.markdown(f"💡 {suggestion}")
+
 
 def main():
     st.set_page_config(page_title="AI Career Developer Platform", page_icon="💻", layout="wide")
@@ -250,10 +308,12 @@ def main():
                     cols = st.columns(min(len(st.session_state["resume_versions"]), 5))
                     for idx, val in enumerate(st.session_state["resume_versions"][:5]):
                         with cols[idx]:
-                            if st.button(f"Version {idx+1}", key=f"restore_res_{idx}"):
-                                st.session_state["resume_text"] = val
-                                st.toast(f"Rolled back to Version {idx+1}!", icon="⏪")
-                                st.rerun()
+                            st.button(
+                                f"Version {idx+1}",
+                                key=f"restore_res_{idx}",
+                                on_click=_restore_resume_version,
+                                args=(idx,),
+                            )
                 
                 # Control Actions Grid
                 act1, act2 = st.columns(2)
@@ -287,15 +347,19 @@ def main():
                 st.markdown("### ⬇️ Export / Download Options")
                 down1, down2 = st.columns(2)
                 with down1:
-                    pdf_bytes = compile_pdf(st.session_state["resume_text"])
                     safe_name = _clean_filename(st.session_state.name)
-                    st.download_button(
-                        label="📄 Download ATS PDF",
-                        data=pdf_bytes,
-                        file_name=f"resume_{safe_name}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
+                    try:
+                        pdf_bytes = compile_pdf(st.session_state["resume_text"])
+                    except PDFGenerationError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.download_button(
+                            label="📄 Download ATS PDF",
+                            data=pdf_bytes,
+                            file_name=f"resume_{safe_name}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
                 with down2:
                     docx_bytes = compile_docx(st.session_state["resume_text"])
                     st.download_button(
@@ -338,10 +402,12 @@ def main():
                     cols = st.columns(min(len(st.session_state["cover_letter_versions"]), 5))
                     for idx, val in enumerate(st.session_state["cover_letter_versions"][:5]):
                         with cols[idx]:
-                            if st.button(f"Version {idx+1}", key=f"restore_cl_{idx}"):
-                                st.session_state["cover_letter_text"] = val
-                                st.toast(f"Rolled back to Version {idx+1}!", icon="⏪")
-                                st.rerun()
+                            st.button(
+                                f"Version {idx+1}",
+                                key=f"restore_cl_{idx}",
+                                on_click=_restore_cover_letter_version,
+                                args=(idx,),
+                            )
                 
                 # Tone polishing actions
                 st.markdown("**🎭 Quick AI Tone Refinements:**")
@@ -386,15 +452,19 @@ def main():
                 st.markdown("### ⬇️ Export / Download Options")
                 down1, down2 = st.columns(2)
                 with down1:
-                    pdf_bytes_cl = compile_pdf(st.session_state["cover_letter_text"])
                     safe_name = _clean_filename(st.session_state.name)
-                    st.download_button(
-                        label="📄 Download PDF Letter",
-                        data=pdf_bytes_cl,
-                        file_name=f"cover_letter_{safe_name}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
+                    try:
+                        pdf_bytes_cl = compile_pdf(st.session_state["cover_letter_text"])
+                    except PDFGenerationError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.download_button(
+                            label="📄 Download PDF Letter",
+                            data=pdf_bytes_cl,
+                            file_name=f"cover_letter_{safe_name}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
                 with down2:
                     docx_bytes_cl = compile_docx(st.session_state["cover_letter_text"])
                     st.download_button(
@@ -451,33 +521,7 @@ def main():
         else:
             # Check if there is an existing ATS score calculation in session state
             if st.session_state["ats_match_result"]:
-                ats_result = st.session_state["ats_match_result"]
-                match_score = ats_result.get("match_score", 0)
-                missing_keywords = ats_result.get("missing_skills", [])
-                suggestions = ats_result.get("suggestions", [])
-
-                st.markdown("### ATS AI Analysis Result")
-                
-                if match_score >= 80:
-                    st.success(f"Excellent Match! Score: {match_score}%")
-                elif match_score >= 50:
-                    st.info(f"Good Match! Score: {match_score}%")
-                else:
-                    st.warning(f"Needs Improvement. Score: {match_score}%")
-                    
-                st.progress(match_score / 100.0)
-
-                if missing_keywords:
-                    st.markdown("**Critical Missing Skills (Consider adding these to your profile):**")
-                    for kw in missing_keywords:
-                        st.markdown(f"🔴 `{kw}`")
-                else:
-                    st.success("Amazing! Your profile covers all major technical keywords found in the Job Description.")
-                    
-                if suggestions:
-                    st.markdown("**AI Suggestions for Improvement:**")
-                    for sug in suggestions:
-                        st.markdown(f"💡 {sug}")
+                _render_ats_result(st.session_state["ats_match_result"])
             
             # Button to calculate / recalculate manually
             if st.button("Calculate / Recalculate ATS Match Score"):

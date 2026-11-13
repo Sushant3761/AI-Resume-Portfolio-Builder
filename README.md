@@ -20,11 +20,11 @@ This project provides a pipeline to automate the creation of strictly formatted,
 ## 5. AI Integration Details
 - **API Provider**: OpenRouter
 - **Endpoint**: `https://openrouter.ai/api/v1/chat/completions`
-- **Model**: `mistralai/mistral-7b-instruct`
+- **Model**: configured with `OPENROUTER_MODEL`
 - **Parameters**: `max_tokens=450`, `temperature=0.7`
 - **Prompt Engineering**: The system utilizes rigid prompt templates commanding specific strict token limits, exact paragraph counts, and negative constraints (e.g., removing fluff words). 
 - **Safety Safeguards**: Word limit rewrite commands are injected to enforce length restrictions.
-- **Error Handling**: Implements explicit HTTP 429 (Rate Limit) logic and 30-second timeouts. API keys are safely loaded via `.env`.
+- **Error Handling**: Uses bounded retries, exponential backoff with jitter, `Retry-After` handling, and sanitized error categories. API keys are loaded from Streamlit secrets or environment variables.
 
 ## 6. Machine Learning Implementation
 - **Algorithms**: 
@@ -60,10 +60,13 @@ Resume&Portfolio Builder/
    ```bash
    pip install -r requirements.txt
    ```
-4. Create a `.env` file in the root directory and add your API key:
+4. Create a `.env` file in the root directory and configure your OpenRouter key and model:
    ```env
    OPENROUTER_API_KEY="your_api_key_here"
+   OPENROUTER_MODEL="provider/model-id"
    ```
+   Optionally set `OPENROUTER_FALLBACK_MODEL` to enable fallback only when the primary model is unavailable.
+   For Streamlit Cloud, configure the same names in Streamlit secrets.
 5. Run the application:
    ```bash
    streamlit run app.py
