@@ -40,15 +40,26 @@ class APIError(Exception):
     """Custom exception raised on API failure to prevent Streamlit caching."""
     pass
 
-def _setting(name: str, default: str = "") -> str:
-    """Read a non-empty setting from Streamlit secrets, then the environment."""
+def _secret_setting(name: str):
+    """Read one Streamlit secret, treating an absent secrets store as missing."""
     try:
-        value = st.secrets.get(name)
-    except Exception:
-        value = None
-    if value is None or not str(value).strip():
-        value = os.environ.get(name, default)
-    return str(value).strip() if value is not None else ""
+        return st.secrets.get(name)
+    except (KeyError, StreamlitSecretNotFoundError):
+        return None
+
+
+def _non_empty_setting(value):
+    return str(value).strip() if value is not None and str(value).strip() else ""
+
+
+def _setting(name: str, default: str = "") -> str:
+    """Read non-empty process environment settings before Streamlit secrets."""
+    value = _non_empty_setting(os.environ.get(name))
+    if value:
+        return value
+
+    value = _non_empty_setting(_secret_setting(name))
+    return value if value else _non_empty_setting(default)
 
 
 def get_api_key():
@@ -62,12 +73,8 @@ def get_api_key():
     if value and value.strip():
         return value.strip()
 
-    try:
-        value = st.secrets.get("OPENROUTER_API_KEY")
-    except (KeyError, StreamlitSecretNotFoundError):
-        # Streamlit raises when no secrets file/configuration exists.
-        value = None
-    return str(value).strip() if value is not None and str(value).strip() else None
+    value = _non_empty_setting(_secret_setting("OPENROUTER_API_KEY"))
+    return value or None
 
 
 def _generation_configuration():
@@ -142,8 +149,11 @@ def _request_model(
     """Make bounded requests for one model. Returns (content, sanitized category).
 
     The monotonic deadline is best-effort: Requests' timeout limits socket
-    inactivity rather than total wall-clock time. Late responses are discarded,
-    and no new attempt starts once the deadline is exhausted.
+    inactivity rather than total wall-clock time. A peer that keeps sending
+    bytes can keep the blocking request alive beyond the deadline. We avoid
+    worker threads because they cannot safely cancel Requests and can outlive
+    the Streamlit run. Late responses are discarded, and no new attempt starts
+    once the deadline is exhausted.
     """
     started = time.monotonic()
     deadline = deadline if deadline is not None else started + TOTAL_REQUEST_BUDGET_SECONDS
@@ -283,6 +293,15 @@ def _user_error(category: str) -> str:
     return f"⚠️ {messages.get(category, messages['service_unavailable'])}"
 
 
+def _configuration_error(exc: Exception) -> str:
+    """Report configuration failures without exposing exception details."""
+    logger.error(
+        "OpenRouter configuration could not be read (exception=%s)",
+        type(exc).__name__,
+    )
+    return "⚠️ OpenRouter configuration could not be read. Check environment variables or Streamlit Secrets."
+
+
 def call_llm_raw(prompt: str, use_fallback_model: bool = False, _configuration=None) -> str:
     """Call configured models within a shared, best-effort elapsed-time budget.
 
@@ -290,12 +309,18 @@ def call_llm_raw(prompt: str, use_fallback_model: bool = False, _configuration=N
     Requests call can exceed it if the peer continually sends data, because
     Requests exposes socket-inactivity timeouts rather than a hard total timeout.
     """
-    api_key = get_api_key()
+    try:
+        api_key = get_api_key()
+    except Exception as exc:
+        return _configuration_error(exc)
     if not api_key:
         logger.error("OpenRouter API key is not configured")
         return "⚠️ OpenRouter API key is not configured. Set OPENROUTER_API_KEY in Streamlit secrets or the process environment."
 
-    configuration = _configuration or _generation_configuration()
+    try:
+        configuration = _configuration or _generation_configuration()
+    except Exception as exc:
+        return _configuration_error(exc)
     primary_model, fallback_model, site_url, app_name = configuration
     if use_fallback_model:
         if not fallback_model:
@@ -338,9 +363,13 @@ def _cached_call_llm(prompt: str, use_fallback_model: bool, configuration: tuple
 def call_llm(prompt: str, use_fallback_model: bool = False) -> str:
     """Wrapper that leverages caching and handles exceptions gracefully."""
     try:
-        return _cached_call_llm(prompt, use_fallback_model, _generation_configuration())
-    except APIError as e:
-        return str(e)
+        configuration = _generation_configuration()
+    except Exception as exc:
+        return _configuration_error(exc)
+    try:
+        return _cached_call_llm(prompt, use_fallback_model, configuration)
+    except APIError as exc:
+        return str(exc)
 
 def extract_json(text: str) -> str:
     """Extract the first valid JSON object without regex or brace-count shortcuts."""

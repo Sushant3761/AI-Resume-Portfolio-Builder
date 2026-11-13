@@ -4,8 +4,10 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
+from pathlib import Path
 from unittest.mock import Mock, call, patch
 from streamlit.errors import StreamlitSecretNotFoundError
+from streamlit.testing.v1 import AppTest
 
 import app as streamlit_app
 from utils import docx_generator, pdf_generator, resume_generator, similarity
@@ -93,10 +95,52 @@ class OpenRouterReliabilityTests(unittest.TestCase):
                 patch.dict(os.environ, {"OPENROUTER_MODEL": "test/from-env"}):
             self.assertEqual(resume_generator._setting("OPENROUTER_MODEL"), "test/from-env")
 
-    def test_streamlit_secret_takes_precedence_over_environment(self):
+    def test_environment_model_takes_precedence_over_streamlit_secret(self):
         with patch.object(resume_generator.st, "secrets", {"OPENROUTER_MODEL": "test/from-secret"}, create=True), \
                 patch.dict(os.environ, {"OPENROUTER_MODEL": "test/from-env"}):
+            self.assertEqual(resume_generator._setting("OPENROUTER_MODEL"), "test/from-env")
+
+    def test_empty_environment_model_falls_back_to_streamlit_secret(self):
+        with patch.object(resume_generator.st, "secrets", {"OPENROUTER_MODEL": "test/from-secret"}, create=True), \
+                patch.dict(os.environ, {"OPENROUTER_MODEL": "   "}):
             self.assertEqual(resume_generator._setting("OPENROUTER_MODEL"), "test/from-secret")
+
+    def test_empty_secret_is_treated_as_missing(self):
+        with patch.object(resume_generator.st, "secrets", {"OPENROUTER_MODEL": "  "}, create=True), \
+                patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENROUTER_MODEL", None)
+            self.assertEqual(resume_generator._setting("OPENROUTER_MODEL"), "")
+
+    def test_unexpected_model_secret_error_is_not_suppressed(self):
+        broken_secrets = Mock()
+        broken_secrets.get.side_effect = RuntimeError("unexpected configuration failure")
+        with patch.object(resume_generator.st, "secrets", broken_secrets, create=True), \
+                patch.dict(os.environ, {"OPENROUTER_MODEL": ""}):
+            with self.assertRaisesRegex(RuntimeError, "unexpected configuration failure"):
+                resume_generator._setting("OPENROUTER_MODEL")
+
+    def test_missing_model_configuration_is_empty_and_does_not_call_provider(self):
+        missing_secrets = Mock()
+        missing_secrets.get.side_effect = StreamlitSecretNotFoundError("not configured")
+        with patch.object(resume_generator.st, "secrets", missing_secrets, create=True), \
+                patch.dict(os.environ, {}, clear=False), \
+                patch.object(resume_generator.requests, "post") as post:
+            os.environ.pop("OPENROUTER_MODEL", None)
+            self.assertEqual(resume_generator._setting("OPENROUTER_MODEL"), "")
+            post.assert_not_called()
+
+    def test_configuration_lookup_error_returns_sanitized_user_message(self):
+        secret_marker = "never-display-this-configuration-detail"
+        broken_secrets = Mock()
+        broken_secrets.get.side_effect = RuntimeError(secret_marker)
+        with patch.object(resume_generator.st, "secrets", broken_secrets, create=True), \
+                patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key", "OPENROUTER_MODEL": ""}), \
+                self.assertLogs(resume_generator.logger, level=logging.ERROR) as captured:
+            result = resume_generator.call_llm("prompt")
+        output = result + "\n" + "\n".join(captured.output)
+        self.assertIn("configuration could not be read", result)
+        self.assertNotIn(secret_marker, output)
+        self.assertNotIn("test-key", output)
 
     def test_expired_total_budget_prevents_a_request(self):
         with patch.object(resume_generator.time, "monotonic", side_effect=[10.0, 10.0]), \
@@ -206,6 +250,25 @@ class OpenRouterReliabilityTests(unittest.TestCase):
         self.assertIsNone(content)
         self.assertEqual(error, "invalid_response")
         self.assertEqual(post.call_count, resume_generator.MAX_RETRIES)
+
+    def test_empty_model_completion_retries_then_returns_controlled_error(self):
+        response = make_response(200, {"choices": [{"message": {"content": "  "}}]})
+        with patch.object(resume_generator.requests, "post", return_value=response) as post, \
+                patch.object(resume_generator.time, "sleep"):
+            content, error = resume_generator._request_model("prompt", "test/model", "test-key")
+        self.assertIsNone(content)
+        self.assertEqual(error, "empty_response")
+        self.assertEqual(post.call_count, resume_generator.MAX_RETRIES)
+
+    def test_timeout_error_message_never_contains_api_key(self):
+        api_key = "never-display-this-api-key"
+        configuration = ("test/model", "", "http://localhost:8501", "Test App")
+        with patch.object(resume_generator, "get_api_key", return_value=api_key), \
+                patch.object(resume_generator, "_generation_configuration", return_value=configuration), \
+                patch.object(resume_generator, "_request_model", return_value=(None, "timeout")):
+            result = resume_generator.call_llm_raw("prompt")
+        self.assertIn("timed out", result)
+        self.assertNotIn(api_key, result)
 
     def test_public_call_llm_prompt_signature_remains_compatible(self):
         configuration = ("test/model", "", "http://localhost:8501", "AI Career Platform")
@@ -450,6 +513,135 @@ class PortfolioAndATSRegressionTests(unittest.TestCase):
 
 
 class ApplicationBehaviorTests(unittest.TestCase):
+    def _run_app_generation_button(self, button_fragment, patched_generator, initial_state=None):
+        with patched_generator:
+            app_test = AppTest.from_file(str(Path(__file__).with_name("app.py")))
+            app_test.session_state["name"] = "Synthetic Candidate"
+            app_test.session_state["target_role"] = "Software Engineer"
+            app_test.session_state["skills"] = "Python"
+            app_test.session_state["projects"] = "Sample project"
+            app_test.session_state["job_description"] = "Python software engineer"
+            for key, value in (initial_state or {}).items():
+                app_test.session_state[key] = value
+            app_test.run()
+            button = next(item for item in app_test.button if button_fragment in item.label)
+            button.click().run()
+        return app_test
+
+    def test_resume_generation_error_is_displayed_without_sensitive_text(self):
+        secret_marker = "private-provider-token"
+        app_test = self._run_app_generation_button(
+            "Generate / Regenerate Base Resume",
+            patch.object(
+                resume_generator,
+                "generate_resume",
+                return_value=f"⚠️ provider error {secret_marker}",
+            ),
+            initial_state={
+                "resume_text": "previous resume",
+                "resume_versions": ["previous resume"],
+                "live_resume_editor": "previous resume",
+            },
+        )
+        errors = " ".join(element.value for element in app_test.error)
+        self.assertIn("Resume generation could not be completed", errors)
+        self.assertNotIn(secret_marker, errors)
+        self.assertEqual(app_test.session_state["resume_text"], "")
+        self.assertEqual(app_test.session_state["resume_versions"], [])
+        self.assertNotIn("live_resume_editor", app_test.session_state)
+        self.assertEqual(len(app_test.exception), 0)
+
+    def test_successful_resume_regeneration_replaces_previous_content(self):
+        app_test = self._run_app_generation_button(
+            "Generate / Regenerate Base Resume",
+            patch.object(resume_generator, "generate_resume", return_value="new resume"),
+            initial_state={
+                "resume_text": "previous resume",
+                "resume_versions": ["previous resume"],
+                "live_resume_editor": "previous resume",
+            },
+        )
+        self.assertEqual(app_test.session_state["resume_text"], "new resume")
+        self.assertEqual(app_test.session_state["resume_versions"], ["new resume"])
+        self.assertEqual(app_test.session_state["live_resume_editor"], "new resume")
+        self.assertEqual(len(app_test.exception), 0)
+
+    def test_cover_letter_generation_error_is_displayed(self):
+        app_test = self._run_app_generation_button(
+            "Generate / Regenerate Base Cover Letter",
+            patch.object(
+                resume_generator,
+                "generate_cover_letter",
+                return_value="⚠️ provider error",
+            ),
+            initial_state={
+                "cover_letter_text": "previous letter",
+                "cover_letter_versions": ["previous letter"],
+                "live_cl_editor": "previous letter",
+            },
+        )
+        self.assertTrue(any("Cover letter generation could not be completed" in e.value for e in app_test.error))
+        self.assertEqual(app_test.session_state["cover_letter_text"], "")
+        self.assertEqual(app_test.session_state["cover_letter_versions"], [])
+        self.assertNotIn("live_cl_editor", app_test.session_state)
+        self.assertEqual(len(app_test.exception), 0)
+
+    def test_successful_cover_letter_regeneration_replaces_previous_content(self):
+        app_test = self._run_app_generation_button(
+            "Generate / Regenerate Base Cover Letter",
+            patch.object(resume_generator, "generate_cover_letter", return_value="new letter"),
+            initial_state={
+                "cover_letter_text": "previous letter",
+                "cover_letter_versions": ["previous letter"],
+                "live_cl_editor": "previous letter",
+            },
+        )
+        self.assertEqual(app_test.session_state["cover_letter_text"], "new letter")
+        self.assertEqual(app_test.session_state["cover_letter_versions"], ["new letter"])
+        self.assertEqual(app_test.session_state["live_cl_editor"], "new letter")
+        self.assertEqual(len(app_test.exception), 0)
+
+    def test_non_string_cover_letter_refinement_shows_safe_error(self):
+        app_test = self._run_app_generation_button(
+            "Shorter",
+            patch.object(resume_generator, "refine_cover_letter_tone", return_value=None),
+            initial_state={
+                "cover_letter_text": "existing letter",
+                "cover_letter_versions": ["existing letter"],
+                "live_cl_editor": "existing letter",
+            },
+        )
+        self.assertTrue(any("Cover letter generation returned an invalid result" in e.value for e in app_test.error))
+        self.assertEqual(app_test.session_state["cover_letter_text"], "existing letter")
+        self.assertEqual(len(app_test.exception), 0)
+
+    def test_portfolio_generation_error_is_displayed(self):
+        app_test = self._run_app_generation_button(
+            "Generate / Preview Live Portfolio",
+            patch.object(
+                resume_generator,
+                "generate_portfolio_data",
+                return_value={"about": "⚠️ provider error", "projects": []},
+            ),
+        )
+        self.assertTrue(any("Portfolio generation could not be completed" in e.value for e in app_test.error))
+        self.assertEqual(len(app_test.exception), 0)
+
+    def test_ats_failure_is_displayed_as_a_controlled_error(self):
+        secret_marker = "private-provider-token"
+        app_test = self._run_app_generation_button(
+            "Calculate / Recalculate ATS Match Score",
+            patch.object(
+                similarity,
+                "analyze_ats_match",
+                return_value={"match_score": None, "error": secret_marker},
+            ),
+        )
+        errors = " ".join(element.value for element in app_test.error)
+        self.assertIn("ATS analysis could not be completed", errors)
+        self.assertNotIn(secret_marker, errors)
+        self.assertEqual(len(app_test.exception), 0)
+
     def test_version_restore_updates_document_and_editor_state(self):
         for text_key, versions_key, editor_key in (
             ("resume_text", "resume_versions", "live_resume_editor"),
@@ -473,8 +665,10 @@ class ApplicationBehaviorTests(unittest.TestCase):
                 patch.object(streamlit_app.st, "progress") as show_progress, \
                 patch.object(streamlit_app.st, "success") as show_success, \
                 patch.object(streamlit_app.st, "warning") as show_warning:
-            streamlit_app._render_ats_result({"match_score": None, "error": "Invalid ATS response"})
-        show_error.assert_called_once_with("Invalid ATS response")
+            streamlit_app._render_ats_result({"match_score": None, "error": "private-provider-token"})
+        show_error.assert_called_once_with(
+            "ATS analysis could not be completed. Please review your inputs and try again."
+        )
         show_progress.assert_not_called()
         show_success.assert_not_called()
         show_warning.assert_not_called()
