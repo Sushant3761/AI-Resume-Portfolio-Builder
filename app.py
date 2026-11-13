@@ -27,6 +27,25 @@ def _clean_filename(filename: str) -> str:
     return re.sub(r'[^\w\-_\. ]', '_', filename)
 
 
+def _show_generation_error(result, feature: str) -> bool:
+    """Show a stable, credential-safe message for a failed generation result."""
+    if not isinstance(result, str):
+        st.error(f"{feature} generation returned an invalid result. Please try again.")
+        return True
+    if not (result.startswith("⚠️") or result.startswith("Error")):
+        return False
+
+    if result.startswith("Error: Name and Target Role"):
+        message = "Enter a name and target job role before generating."
+    else:
+        message = (
+            f"{feature} generation could not be completed. "
+            "Check the OpenRouter configuration and try again."
+        )
+    st.error(message)
+    return True
+
+
 def _restore_document_version(session_state, text_key: str, versions_key: str, editor_key: str, index: int) -> bool:
     """Restore a saved document version and synchronize its editor widget state."""
     versions = session_state.get(versions_key, [])
@@ -55,7 +74,7 @@ def _restore_cover_letter_version(index: int) -> None:
 def _render_ats_result(ats_result: dict) -> None:
     """Render either a validated ATS score or its controlled error state."""
     if ats_result.get("error"):
-        st.error(ats_result["error"])
+        st.error("ATS analysis could not be completed. Please review your inputs and try again.")
         return
 
     match_score = ats_result["match_score"]
@@ -284,9 +303,12 @@ def main():
             with c1:
                 if st.button("🔁 Generate / Regenerate Base Resume", type="secondary"):
                     st.toast("Generating base resume...", icon='⏳')
+                    st.session_state["resume_text"] = ""
+                    st.session_state["resume_versions"] = []
+                    st.session_state.pop("live_resume_editor", None)
                     with st.spinner("AI is formatting your resume..."):
                         resume_output = generate_resume(user_data)
-                        if not (resume_output.startswith("⚠️") or resume_output.startswith("Error")):
+                        if not _show_generation_error(resume_output, "Resume"):
                             st.session_state["resume_text"] = resume_output
                             st.session_state["resume_versions"] = [resume_output]
                             st.toast("Base resume generated successfully!", icon="✅")
@@ -325,23 +347,24 @@ def main():
                             st.session_state["resume_versions"].append(new_text)
                         
                         # Trigger ATS re-check if JD is present
+                        ats_succeeded = True
                         if st.session_state.job_description.strip():
                             with st.spinner("Recalculating ATS fit score..."):
                                 ats_result = analyze_ats_match(new_text, st.session_state.job_description)
                                 st.session_state["ats_match_result"] = ats_result
-                        st.toast("Changes saved and ATS score updated!", icon="✅")
+                                ats_succeeded = not bool(ats_result.get("error"))
+                        if ats_succeeded:
+                            st.toast("Changes saved and ATS score updated!", icon="✅")
                         st.rerun()
                 with act2:
                     if st.button("🪄 AI ImproveAchievements", use_container_width=True):
                         with st.spinner("AI is polishing achievements and metrics..."):
                             improved = improve_resume_with_ai(st.session_state["live_resume_editor"], st.session_state.target_role)
-                            if not (improved.startswith("⚠️") or improved.startswith("Error")):
+                            if not _show_generation_error(improved, "Resume improvement"):
                                 st.session_state["resume_text"] = improved
                                 st.session_state["resume_versions"].append(improved)
                                 st.toast("Resume improved successfully!", icon="✨")
                                 st.rerun()
-                            else:
-                                st.error(improved)
                                 
                 # Direct PDF/Word Downloads
                 st.markdown("### ⬇️ Export / Download Options")
@@ -379,9 +402,12 @@ def main():
             with c1:
                 if st.button("🔁 Generate / Regenerate Base Cover Letter", type="secondary"):
                     st.toast("Generating base cover letter...", icon='⏳')
+                    st.session_state["cover_letter_text"] = ""
+                    st.session_state["cover_letter_versions"] = []
+                    st.session_state.pop("live_cl_editor", None)
                     with st.spinner("Writing tailored introduction..."):
                         cl_output = generate_cover_letter(user_data)
-                        if not (cl_output.startswith("⚠️") or cl_output.startswith("Error")):
+                        if not _show_generation_error(cl_output, "Cover letter"):
                             st.session_state["cover_letter_text"] = cl_output
                             st.session_state["cover_letter_versions"] = [cl_output]
                             st.toast("Base cover letter generated successfully!", icon="✅")
@@ -416,7 +442,7 @@ def main():
                     if st.button("✂️ Shorter", use_container_width=True):
                         with st.spinner("Making it concise..."):
                             shortened = refine_cover_letter_tone(st.session_state["live_cl_editor"], "shorter")
-                            if not (shortened.startswith("⚠️") or shortened.startswith("Error")):
+                            if not _show_generation_error(shortened, "Cover letter"):
                                 st.session_state["cover_letter_text"] = shortened
                                 st.session_state["cover_letter_versions"].append(shortened)
                                 st.toast("Cover letter shortened!", icon="✨")
@@ -425,7 +451,7 @@ def main():
                     if st.button("💼 Professional", use_container_width=True):
                         with st.spinner("Elevating tone..."):
                             prof = refine_cover_letter_tone(st.session_state["live_cl_editor"], "more professional")
-                            if not (prof.startswith("⚠️") or prof.startswith("Error")):
+                            if not _show_generation_error(prof, "Cover letter"):
                                 st.session_state["cover_letter_text"] = prof
                                 st.session_state["cover_letter_versions"].append(prof)
                                 st.toast("Tone made professional!", icon="✨")
@@ -434,7 +460,7 @@ def main():
                     if st.button("💻 Technical", use_container_width=True):
                         with st.spinner("Adding technical depth..."):
                             tech = refine_cover_letter_tone(st.session_state["live_cl_editor"], "more technical")
-                            if not (tech.startswith("⚠️") or tech.startswith("Error")):
+                            if not _show_generation_error(tech, "Cover letter"):
                                 st.session_state["cover_letter_text"] = tech
                                 st.session_state["cover_letter_versions"].append(tech)
                                 st.toast("Tone made more technical!", icon="✨")
@@ -490,10 +516,13 @@ def main():
                 st.toast("Generating Portfolio Data...", icon='⏳')
                 with st.spinner("Instructing LLM to output Semantic JSON structure..."):
                     portfolio_json = generate_portfolio_data(user_data)
-                    
-                    if isinstance(portfolio_json.get("about"), str) and portfolio_json.get("about", "").startswith("⚠️"):
-                        st.error(portfolio_json["about"])
-                    else:
+
+                    portfolio_error = (
+                        portfolio_json.get("about")
+                        if isinstance(portfolio_json, dict)
+                        else "⚠️ Invalid portfolio result"
+                    )
+                    if not _show_generation_error(portfolio_error, "Portfolio"):
                         final_html = build_portfolio_html(portfolio_json, theme, user_data)
                         st.success("Portfolio HTML compiled successfully!")
                         safe_name = _clean_filename(st.session_state.name)
@@ -535,7 +564,8 @@ def main():
                     
                     ats_result = analyze_ats_match(combined_user_text, st.session_state.job_description)
                     st.session_state["ats_match_result"] = ats_result
-                    st.toast("ATS analysis completed!", icon="✅")
+                    if not ats_result.get("error"):
+                        st.toast("ATS analysis completed!", icon="✅")
                     st.rerun()
 
 if __name__ == "__main__":
